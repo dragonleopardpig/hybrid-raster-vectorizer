@@ -54,6 +54,13 @@ def isolate(
     return cv2.copyMakeBorder(window, 16, 16, 16, 16, cv2.BORDER_CONSTANT, value=255)
 
 
+def turned(image: np.ndarray, angle: float) -> np.ndarray:
+    """Turn a crop upright so it can be read, given the angle it is drawn at."""
+    if angle < 0:
+        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+    return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+
 def read_tesseract(image: np.ndarray, *, psm: int = 7, language: str = "eng") -> Reading:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "crop.png"
@@ -171,6 +178,21 @@ def _rotated(image: np.ndarray, degrees: float) -> np.ndarray:
         image, matrix, (width, height),
         flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255,
     )
+
+
+def legibility(reading: "Reading") -> float:
+    """How much a reading looks like language rather than punctuation soup.
+
+    Confidence alone cannot choose which way up a turned label goes: read both
+    ways, this figure's label scores 0.67 either way, as 'v =Asing' and as
+    'dusy=~"'. Tesseract's own orientation detector is the right tool for the
+    question and refuses a label this short, so what is left is that real text
+    is mostly letters.
+    """
+    if not reading.text:
+        return 0.0
+    letters = sum(1 for character in reading.text if character.isalnum() or character == " ")
+    return reading.confidence * (letters / len(reading.text))
 
 
 _WORDLIKE = re.compile(r"^[A-Za-z][A-Za-z.'-]*$")

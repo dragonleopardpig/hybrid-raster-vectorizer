@@ -21,8 +21,10 @@ from .ocr import (
     Reading,
     augmentations,
     isolate,
+    legibility,
     looks_like_prose,
     read_tesseract,
+    turned,
 )
 from .preprocess import Page, load_page
 from .primitives import Rule, TickSet, detect_rules, detect_ticks
@@ -85,6 +87,7 @@ class Analysis:
     frames: list = field(default_factory=list)
     legends: list = field(default_factory=list)
     dashed: list = field(default_factory=list)
+    rotations: dict[int, float] = field(default_factory=dict)
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
     alternatives: dict[int, list[str]] = field(default_factory=dict)
@@ -140,10 +143,23 @@ def analyse(path: Path, options: Options) -> Analysis:
 def read_blocks(analysis: Analysis, options: Options) -> None:
     """Route every block to the recogniser its structure calls for."""
     page = analysis.page
-    crops = {
-        index: isolate(page.gray, block.components)
-        for index, block in enumerate(analysis.blocks)
-    }
+    crops: dict[int, np.ndarray] = {}
+    for index, block in enumerate(analysis.blocks):
+        crop = isolate(page.gray, block.components)
+        if block.orientation != "vertical":
+            crops[index] = crop
+            continue
+        # Which way up is not knowable from the ink, so both are read and the
+        # one the recogniser is more sure of is taken.
+        best = None
+        for angle in (-90.0, 90.0):
+            candidate = turned(crop, angle)
+            score = legibility(read_tesseract(candidate))
+            if best is None or score > best[0]:
+                best = (score, angle, candidate)
+        _score, angle, candidate = best
+        analysis.rotations[index] = angle
+        crops[index] = candidate
 
     # A legend entry names a series, so it is prose even when it reads poorly.
     # Handing it to a formula recogniser turns a stray sample mark beside the
@@ -230,12 +246,17 @@ def _measure_node(reading: Reading, block: Block) -> tex.Row:
     return tex.parse(reading.text)
 
 
-def _block_ink(page: Page, block: Block) -> np.ndarray:
+def _block_ink(page: Page, block: Block, angle: float | None = None) -> np.ndarray:
     mask = np.zeros(page.ink.shape, dtype=np.uint8)
     for component in block.components:
         region = mask[component.y : component.bottom, component.x : component.right]
         np.maximum(region, component.mask, out=region)
-    return mask[block.y : block.bottom, block.x : block.right]
+    window = mask[block.y : block.bottom, block.x : block.right]
+    if angle is None:
+        return window
+    # Size and score a turned label against ink turned the same way.
+    turn = cv2.ROTATE_90_CLOCKWISE if angle < 0 else cv2.ROTATE_90_COUNTERCLOCKWISE
+    return cv2.rotate(window, turn)
 
 
 def _ink_extent(image: np.ndarray) -> tuple[int, int]:
@@ -284,6 +305,7 @@ class Prepared:
     score: float
     changes: list[str] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
+    transform: str = ""
 
     @property
     def pure_fraction(self) -> bool:
@@ -338,9 +360,11 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         if reading is None or not reading.text:
             continue
 
-        ink = _block_ink(page, block)
+        angle = analysis.rotations.get(index)
+        ink = _block_ink(page, block, angle)
         node = _measure_node(reading, block)
-        size, score = _best_size(node, fonts, ink, float(block.width))
+        along = float(block.height if angle is not None else block.width)
+        size, score = _best_size(node, fonts, ink, along)
         prepared.append(
             Prepared(index=index, block=block, reading=reading, node=node, size=size, score=score)
         )
@@ -353,6 +377,19 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
     for entry in prepared:
         block, size = entry.block, entry.size
         box = tex.layout(entry.node, fonts.metrics, size)
+        angle = analysis.rotations.get(entry.index)
+        if angle is not None:
+            # Laid out flat, then turned about the middle of its own ink.
+            centre_x = block.x + block.width / 2.0
+            centre_y = block.y + block.height / 2.0
+            offset_x = box.width / 2.0
+            offset_y = (box.descent - box.ascent) / 2.0
+            entry.transform = (
+                f"translate({centre_x:.2f} {centre_y:.2f}) rotate({angle:.0f}) "
+                f"translate({-offset_x:.2f} {-offset_y:.2f})"
+            )
+            placements[entry.index] = (0.0, 0.0)
+            continue
         if entry.pure_fraction and block.bars:
             bar = block.bars[0]
             baseline = bar.y + bar.height / 2.0 + tex.AXIS_RATIO * size
@@ -362,6 +399,8 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
             x = float(block.x)
         placements[entry.index] = (x, baseline)
 
+        if entry.transform:
+            continue  # a turned label has no shared frame with the page's ink
         glyph_ink = [
             component for component in block.components if component not in block.bars
         ]
@@ -407,7 +446,8 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         x, baseline = placements[entry.index]
 
         rendered = render_box(box, fonts)
-        score = shape_iou(_block_ink(page, block), rendered) if rendered is not None else entry.score
+        measured = _block_ink(page, block, analysis.rotations.get(entry.index))
+        score = shape_iou(measured, rendered) if rendered is not None else entry.score
         confidence = float(np.clip(0.35 + 0.9 * score, 0.0, 0.99))
 
         if confidence < options.confidence_threshold and options.raster_fallback:
@@ -443,6 +483,7 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
                 source=entry.reading.text,
                 plain=tex.to_text(node),
                 engine=entry.reading.engine,
+                transform=entry.transform,
             )
         )
         entry.score = score

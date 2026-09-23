@@ -35,6 +35,16 @@ UPRIGHT_WORDS = {
     "min", "sup", "inf", "det", "arg", "dim", "deg", "gcd", "Re", "Im",
 }
 
+UPRIGHT_STYLES = {
+    "mathrm", "mathbf", "operatorname", "text", "textrm", "textbf", "textsf",
+    "mathsf", "mathtt", "texttt", "mbox", "hbox",
+}
+
+SLANTED_STYLES = {
+    "mathit", "mathnormal", "boldsymbol", "bm", "pmb", "textit", "mathcal",
+    "mathbb", "mathfrak", "mathscr", "vec", "bar", "hat", "tilde", "dot", "ddot",
+}
+
 SPACING = {",": 0.16, ";": 0.27, ":": 0.21, "!": -0.16, " ": 0.25, "quad": 1.0, "qquad": 2.0}
 IGNORED = {"displaystyle", "textstyle", "limits", "nolimits", "left", "right", "!", "bf", "rm", "it"}
 
@@ -144,11 +154,11 @@ class _Parser:
             numerator = self.parse_atom() or Row([])
             denominator = self.parse_atom() or Row([])
             return Frac(numerator, denominator)
-        if name in {"mathrm", "mathbf", "operatorname", "text", "textrm", "mathsf"}:
+        if name in UPRIGHT_STYLES:
             inner = self.parse_atom() or Row([])
             _set_upright(inner)
             return inner
-        if name in {"mathit", "mathnormal"}:
+        if name in SLANTED_STYLES:
             return self.parse_atom() or Row([])
         if name in SPACING:
             return Space(SPACING[name])
@@ -158,6 +168,10 @@ class _Parser:
             return Run(name, upright=True)
         if name in SYMBOLS:
             return Run(SYMBOLS[name], upright=False)
+        # An unknown command that wraps something is a style we do not model;
+        # keep what it wraps rather than printing the command's own name.
+        if self.peek() == "{":
+            return self.parse_atom() or Row([])
         return Run(name, upright=True)
 
 

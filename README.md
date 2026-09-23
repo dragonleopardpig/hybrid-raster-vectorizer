@@ -71,17 +71,28 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    with cubic Béziers by Schneider's algorithm to a tolerance set as a fraction
    of the pen width. The analytic reading is recorded on the path either way;
    `--idealise` redraws from it instead of from the ink.
-10. **Text** — leftover ink is grouped into labels. Fraction bars are found
+10. **Text** — leftover ink is grouped into labels. Grouping runs along the
+   line, so a label turned on its side arrives as a handful of unrelated
+   pieces; those are rejoined by the one thing that makes them a line — narrow
+   pieces sharing a column, stacked tightly. A column of tick labels also
+   shares an x, but each of those is wider than it is tall and they stand much
+   further apart. Fraction bars are found
    structurally, by being the only rule with ink both above and below, which is
    what separates them from an equals sign or a leading minus. Each bar claims
    its own numerator and denominator, so adjacent tick labels cannot run
    together.
 11. **Reading** — labels are routed to Tesseract or, through a persistent worker,
    to PP-FormulaNet. A confident prose reading wins; anything else is treated as
-   mathematics.
+   mathematics. A turned label is read both ways up and the more legible answer
+   kept. Confidence cannot choose — one figure's label scores 0.67 either way,
+   as `v =Asing` and as `dusy=~"` — and Tesseract's own orientation detector,
+   which is the right tool, refuses a label this short. What is left is that
+   real text is mostly letters.
 12. **Typesetting** — the LaTeX is parsed and laid out using the real advance
    widths of the matched font, then written as positioned SVG text. Repeated
-   structures on one row are set in a single size.
+   structures on one row are set in a single size. A turned label is laid out
+   flat and placed with a `transform`, so its text stays one editable run
+   rather than a glyph per line.
 13. **Verification** — the finished SVG is rasterised with resvg and compared
    against the original ink, and the agreement is reported.
 
@@ -262,7 +273,7 @@ should be.
 
 | figure | paper spread | blocks | note |
 |---|---|---|---|
-| `complex.png` | 8 | 14 | clean; ink agreement 0.83 recall, 0.90 precision; both broken lines found |
+| `complex.png` | 8 | 8 | clean; ink agreement 0.86 recall, 0.90 precision; broken lines and the turned label both read |
 | `waves1.png` | 0 | 44 | clean |
 | `thicklens_cascade.png` | 42 | 38 | flattened |
 | `refraction.png` | 56 | 53 | flattened; grey stipple read as filled areas |
@@ -275,10 +286,12 @@ the point of the 25-level gate.
 
 Shading as dark as the ink is not separable this way and is not attempted.
 
-Finding the broken lines took `complex.png` from 0.787 recall to 0.833 and from
-0.894 precision to 0.904. Its geometry — axes, arrowheads, the vector, both
-dashed construction lines — now comes out right; its text does not, and the
-rotated label up the side of the axis is the worst of it.
+`complex.png` has gone from 0.787 recall to 0.857: finding its broken lines was
+worth 0.046, reading the label up the side of its axis another 0.007, and
+keeping what a LaTeX style command wraps another 0.017 — the last of those
+because `\boldsymbol{x}` was being rendered as the word "boldsymbol". Its
+geometry, its turned label and `x = A cos φ` now come out right. "Imaginary" and
+"Real", set in heavy bold serif, still do not.
 
 ## Still missing
 
@@ -288,8 +301,7 @@ rotated label up the side of the axis is the worst of it.
   recorded with its name and no sample rather than dropped.
 - Dash-dot and other mixed patterns: the period test expects one dash length,
   so a line that alternates long and short is not recognised as one line.
-- Rotated text, such as a label written up the side of an axis. It is currently
-  grouped and read as if it ran across the page, which produces nonsense.
+- Text at any angle other than upright or a quarter turn.
 - Embedded images, and areas filled with anything other than solid ink or
   evenly spaced ruling. Grey stipple is read as a filled area.
 - Multi-line prose blocks and rotated text.

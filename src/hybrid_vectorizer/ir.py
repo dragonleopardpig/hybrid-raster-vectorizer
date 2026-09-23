@@ -296,6 +296,7 @@ class Label(Element):
     source: str = ""
     plain: str = ""
     engine: str = ""
+    transform: str = ""
 
     def to_svg(self, indent: str) -> list[str]:
         if self.box is None:
@@ -303,8 +304,12 @@ class Label(Element):
         aria = f' aria-label="{_attribute(self.plain)}"' if self.plain else ""
         source = f' data-latex="{_attribute(self.source)}"' if self.source else ""
         engine = f' data-engine="{_attribute(self.engine)}"' if self.engine else ""
-        lines = [f'{indent}<g class="label" {self.attributes()}{source}{engine}{aria}>']
-        lines.extend(tex.to_svg(self.box, self.x, self.baseline, indent=indent + "  "))
+        # A turned label is laid out flat and then placed by the transform, so
+        # that its text stays one editable run rather than a glyph per line.
+        placement = f' transform="{_attribute(self.transform)}"' if self.transform else ""
+        origin = (0.0, 0.0) if self.transform else (self.x, self.baseline)
+        lines = [f'{indent}<g class="label" {self.attributes()}{source}{engine}{aria}{placement}>']
+        lines.extend(tex.to_svg(self.box, origin[0], origin[1], indent=indent + "  "))
         lines.append(f"{indent}</g>")
         return lines
 

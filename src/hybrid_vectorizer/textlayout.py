@@ -17,6 +17,7 @@ class Block:
     components: list[Component]
     bars: list[Component] = field(default_factory=list)
     kind: str = "text"
+    orientation: str = "horizontal"
 
     @property
     def x(self) -> int:
@@ -189,6 +190,76 @@ def _has_script(block: Block) -> bool:
     return bool(script_components(block))
 
 
+def group_vertical(
+    blocks: list[Block],
+    text_height: float,
+    *,
+    minimum: int = 3,
+    column: float = 0.6,
+    stacking: float = 1.2,
+) -> list[Block]:
+    """Join a label written up the side of the page into one block.
+
+    Grouping runs along the line, so a label turned on its side arrives as a
+    handful of unrelated pieces. They are rejoined by the one thing that makes
+    them a line: narrow pieces sharing a column, stacked tightly. A column of
+    tick labels also shares an x, but each of those is wider than it is tall and
+    they stand much further apart.
+    """
+    narrow = 1.6 * text_height
+    # A stack of dashes shares a column and stacks tightly too, so the pieces
+    # have to be wide enough to be letters rather than marks on a broken line.
+    slim = 0.35 * text_height
+    candidates = [
+        block
+        for block in blocks
+        if len(block.components) <= 3
+        and slim <= block.width <= narrow
+        and block.height >= slim
+        and not block.bars
+    ]
+    if len(candidates) < minimum:
+        return blocks
+
+    used: set[int] = set()
+    merged: list[Block] = []
+    for seed in sorted(candidates, key=lambda block: block.y):
+        if id(seed) in used:
+            continue
+        run = [seed]
+        while True:
+            last = run[-1]
+            following = [
+                block
+                for block in candidates
+                if id(block) not in used
+                and all(block is not member for member in run)
+                and 0 <= block.y - last.bottom <= stacking * text_height
+                and abs(block.centre_x - last.centre_x) <= column * text_height
+            ]
+            if not following:
+                break
+            run.append(min(following, key=lambda block: block.y))
+        if len(run) < minimum:
+            continue
+        for member in run:
+            used.add(id(member))
+        components = [c for member in run for c in member.components]
+        merged.append(
+            Block(
+                components=sorted(components, key=lambda c: c.y),
+                bars=[],
+                kind="text",
+                orientation="vertical",
+            )
+        )
+
+    if not merged:
+        return blocks
+    kept = [block for block in blocks if id(block) not in used]
+    return sorted(kept + merged, key=lambda block: (block.y, block.x))
+
+
 def group_blocks(
     components: list[Component],
     shape: tuple[int, int],
@@ -236,5 +307,6 @@ def group_blocks(
     blocks = _merge_same_line(blocks, text_height, line_gap * text_height)
     for block in blocks:
         block.kind = "math" if (block.bars or _has_script(block)) else "text"
+    blocks = group_vertical(blocks, text_height)
     blocks.sort(key=lambda block: (block.y, block.x))
     return blocks

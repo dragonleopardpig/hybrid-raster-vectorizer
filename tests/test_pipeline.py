@@ -153,6 +153,76 @@ class TextLayoutTest(unittest.TestCase):
             self.assertEqual(block.kind, "math")
 
 
+class RotatedTextTest(unittest.TestCase):
+    def _block(self, x, y, width, height):
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.textlayout import Block
+
+        return Block(components=[Component(
+            label=1, x=x, y=y, width=width, height=height, area=width * height,
+            centroid=(x + width / 2.0, y + height / 2.0),
+            mask=np.full((height, width), 255, np.uint8),
+        )])
+
+    def test_a_column_of_letters_becomes_one_label(self):
+        from hybrid_vectorizer.textlayout import group_vertical
+
+        blocks = [self._block(40, 100 + row * 34, 22, 24) for row in range(5)]
+        merged = group_vertical(blocks, 22.0)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0].orientation, "vertical")
+        self.assertEqual(len(merged[0].components), 5)
+
+    def test_a_stack_of_dashes_is_not_text(self):
+        from hybrid_vectorizer.textlayout import group_vertical
+
+        blocks = [self._block(40, 100 + row * 30, 4, 16) for row in range(5)]
+        merged = group_vertical(blocks, 22.0)
+        self.assertTrue(all(block.orientation == "horizontal" for block in merged))
+
+    def test_tick_labels_down_an_axis_are_left_alone(self):
+        from hybrid_vectorizer.textlayout import group_vertical
+
+        blocks = [self._block(40, 100 + row * 90, 46, 24) for row in range(4)]
+        merged = group_vertical(blocks, 22.0)
+        self.assertEqual(len(merged), 4)
+        self.assertTrue(all(block.orientation == "horizontal" for block in merged))
+
+    def test_turning_a_crop_is_reversible(self):
+        from hybrid_vectorizer.ocr import turned
+
+        image = np.zeros((40, 90), np.uint8)
+        image[5:12, 10:60] = 255
+        self.assertEqual(turned(image, -90.0).shape, (90, 40))
+        self.assertEqual(turned(image, 90.0).shape, (90, 40))
+        self.assertFalse(np.array_equal(turned(image, -90.0), turned(image, 90.0)))
+
+    def test_letters_beat_punctuation_when_choosing_which_way_up(self):
+        from hybrid_vectorizer.ocr import Reading, legibility
+
+        upright = Reading(text="v =Asing", engine="tesseract", confidence=0.67)
+        upside = Reading(text='dusy=~"', engine="tesseract", confidence=0.67)
+        self.assertGreater(legibility(upright), legibility(upside))
+
+    def test_a_turned_label_is_placed_by_transform(self):
+        from hybrid_vectorizer import ir
+        from hybrid_vectorizer.fonts import Metrics
+
+        metrics = Metrics(units_per_em=1000, advances={}, cap_height=0.7,
+                          x_height=0.45, ascent=0.9, descent=0.2)
+        box = tex.layout(tex.parse("abc"), metrics, 20.0)
+        document = ir.Document(width=200, height=200)
+        document.labels.append(
+            ir.Label(kind="label", identifier="label-0", box=box,
+                     transform="translate(50 50) rotate(-90) translate(-15 5)")
+        )
+        content = document.to_svg()
+        root = ET.fromstring(content)
+        group = root.find(f".//{SVG_NAMESPACE}g[@id='label-0']")
+        self.assertIn("rotate(-90)", group.attrib["transform"])
+        self.assertEqual(group.find(f"{SVG_NAMESPACE}text").attrib["y"], "0")
+
+
 class LatexTest(unittest.TestCase):
     def test_parses_fractions_scripts_and_symbols(self):
         node = tex.parse(r"I=4I_{0}\cos^{2}\frac{ya\pi}{\delta\lambda_{0}}")
@@ -173,6 +243,17 @@ class LatexTest(unittest.TestCase):
         first = tex.layout(node, metrics, 20.0).width
         second = tex.layout(node, metrics, 40.0).width
         self.assertAlmostEqual(second, 2.0 * first, places=6)
+
+    def test_style_commands_keep_what_they_wrap(self):
+        self.assertEqual(tex.to_text(tex.parse(r"\boldsymbol{x}=\boldsymbol{A}")), "x=A")
+        self.assertEqual(tex.to_text(tex.parse(r"\mathbb{R}^{2}")), "R^2")
+
+    def test_an_unknown_wrapper_keeps_its_argument(self):
+        """Rendering the command's own name put 'boldsymbol' into a figure."""
+        self.assertEqual(tex.to_text(tex.parse(r"\unknowncmd{q}+x")), "q+x")
+
+    def test_a_bare_unknown_command_still_shows(self):
+        self.assertEqual(tex.to_text(tex.parse(r"\weird")), "weird")
 
     def test_upright_and_italic_runs_are_separated(self):
         from hybrid_vectorizer.fonts import Metrics
@@ -745,6 +826,7 @@ class NoRegressionTest(unittest.TestCase):
         self.assertEqual(analysis.frames, [])
         self.assertEqual(analysis.legends, [])
         self.assertEqual(analysis.dashed, [], "tick-label bars are not a broken line")
+        self.assertTrue(all(b.orientation == "horizontal" for b in analysis.blocks))
         self.assertEqual(len(analysis.traces), 1)
         self.assertEqual(len(analysis.blocks), 11)
 
@@ -763,6 +845,11 @@ class ScannedFigureTest(unittest.TestCase):
         self.assertEqual(len(self.analysis.dashed), 2)
         lengths = sorted(line.length for line in self.analysis.dashed)
         self.assertGreater(lengths[0], 250)
+
+    def test_the_label_up_the_side_is_read_as_one_line(self):
+        vertical = [b for b in self.analysis.blocks if b.orientation == "vertical"]
+        self.assertEqual(len(vertical), 1)
+        self.assertGreater(vertical[0].height, 2 * vertical[0].width)
 
     def test_they_run_at_right_angles_to_each_other(self):
         import numpy as np
