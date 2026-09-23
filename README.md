@@ -17,9 +17,15 @@ present.
 `convert` is a single automatic pass. Each stage hands measurements to the next,
 and every decision it makes is recorded in a JSON report beside the SVG.
 
-1. **Preprocess** — greyscale, Otsu binarisation, despeckle, deskew from the
-   longest near-horizontal runs. The pen width is measured on the medial axis,
-   and almost every later threshold is expressed as a multiple of it.
+1. **Preprocess** — greyscale, then the paper is evened out where it needs to
+   be. The paper is estimated from the pixels that are *not* ink and carried
+   across the ink by inpainting, so an area with no paper showing through
+   inherits the paper around it: closing or a percentile filter would take a
+   large filled area for background and flatten it away. A page whose paper
+   varies by less than 25 grey levels is left untouched. Then Otsu, then grain
+   below the pen width is dropped — on a worn scan it survives a fixed speck
+   threshold and dominates every later statistic. The pen width is measured on
+   the medial axis, and almost every later threshold is a multiple of it.
 2. **Rules** — long straight runs are found by morphological opening, giving
    each axis its position, extent and thickness. Walking inward from each tip
    while the perpendicular thickness grows detects arrowheads and measures them.
@@ -241,14 +247,39 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 | `--solve-alphabet` | name every distinct shape at once against installed fonts (measured unreliable) |
 | `--no-deskew`, `--no-formula-ocr`, `--no-verify` | skip a stage |
 
+## On real scans
+
+`examples/` holds five scanned optics figures. They are harder than either
+generated example, and the table is where the work stands rather than where it
+should be.
+
+| figure | paper spread | blocks | note |
+|---|---|---|---|
+| `complex.png` | 8 | 14 | clean; ink agreement 0.79 recall, dashed lines are the gap |
+| `waves1.png` | 0 | 44 | clean |
+| `thicklens_cascade.png` | 42 | 38 | flattened |
+| `refraction.png` | 56 | 53 | flattened; grey stipple read as filled areas |
+| `wavefront.png` | 60 | 154 | heavy grain throughout; still the worst case |
+
+Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
+ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
+`refraction.png` from 72 blocks to 53. The clean figures are untouched, which is
+the point of the 25-level gate.
+
+Shading as dark as the ink is not separable this way and is not attempted.
+
 ## Still missing
 
 - A legend sample drawn hard against its label. It becomes one component with
   the label, and splitting at the emptiest column does not help, because a
   hollow sample's own interior is emptier than the gap beside it. The row is
   recorded with its name and no sample rather than dropped.
+- Dashed and dotted lines. Every scanned example has them, and each dash
+  currently becomes its own mark, which is the largest single gap in ink
+  agreement on a real figure.
+- Rotated text, such as a label written up the side of an axis.
 - Embedded images, and areas filled with anything other than solid ink or
-  evenly spaced ruling.
+  evenly spaced ruling. Grey stipple is read as a filled area.
 - Multi-line prose blocks and rotated text.
 - Occlusion recovery beyond rejoining strokes an axis cut apart.
 - Curve families other than lines, polynomials and sinusoids.

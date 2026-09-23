@@ -759,6 +759,54 @@ class EnsembleTest(unittest.TestCase):
         self.assertEqual(len(augmentations(image, 1)), 1)
 
 
+class PaperTest(unittest.TestCase):
+    def test_a_filled_area_survives_flattening(self):
+        """The paper estimate must carry across ink, not treat it as shading."""
+        from hybrid_vectorizer.preprocess import estimate_paper
+
+        gray = np.full((400, 500), 245, np.uint8)
+        cv2.rectangle(gray, (120, 120), (360, 300), 20, -1)
+        paper = estimate_paper(gray)
+        inside = paper[180:240, 180:300]
+        self.assertGreater(int(inside.min()), 180, "the fill was taken for background")
+
+    def test_uneven_shading_is_measured_and_removed(self):
+        """Shading that is lighter than the ink, which is the case on a scan."""
+        from hybrid_vectorizer.preprocess import flatten
+
+        gradient = np.tile(np.linspace(150, 250, 500).astype(np.uint8), (400, 1))
+        for y in (120, 200, 280):
+            cv2.line(gradient, (40, y), (460, y), 0, 4)
+        flat, spread = flatten(gradient)
+        self.assertGreater(spread, 25)
+        corners = [flat[10, 10], flat[10, -10], flat[-10, 10], flat[-10, -10]]
+        self.assertLess(
+            int(max(corners)) - int(min(corners)), 30, "the page is still uneven"
+        )
+        self.assertLess(int(flat[120, 250]), 120, "the ink must survive")
+
+    def test_an_even_page_is_left_alone(self):
+        from hybrid_vectorizer.preprocess import flatten
+
+        page = np.full((300, 400), 250, np.uint8)
+        cv2.circle(page, (200, 150), 60, 0, -1)
+        flat, spread = flatten(page)
+        self.assertLess(spread, 25)
+        self.assertTrue(np.array_equal(flat, page), "a clean page must not be touched")
+
+    def test_grain_smaller_than_the_pen_is_dropped(self):
+        from hybrid_vectorizer.preprocess import remove_grain
+
+        ink = np.zeros((200, 300), np.uint8)
+        cv2.line(ink, (20, 100), (280, 100), 255, 6)
+        rng = np.random.default_rng(3)
+        for x, y in rng.integers([0, 0], [300, 200], size=(120, 2)):
+            ink[y:y + 2, x:x + 2] = 255
+        cleaned = remove_grain(ink, 6.0)
+        self.assertGreater(np.count_nonzero(cleaned[97:104, 20:280]), 1200)
+        self.assertLess(np.count_nonzero(cleaned) - np.count_nonzero(cleaned[95:106, :]), 200)
+
+
 class LoadingTest(unittest.TestCase):
     def test_a_missing_file_is_reported_plainly(self):
         from hybrid_vectorizer.preprocess import load_page

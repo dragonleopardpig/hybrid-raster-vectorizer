@@ -20,6 +20,7 @@ class Page:
     skew_degrees: float
     background: str
     source_path: Path
+    paper_spread: int = 0
 
     @property
     def height(self) -> int:
@@ -40,6 +41,54 @@ def _to_gray(image: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
 
+def estimate_paper(gray: np.ndarray, *, tiles: int = 48) -> np.ndarray:
+    """Estimate the paper behind the drawing, ignoring the drawing itself.
+
+    Closing or a percentile filter would take a large filled area for
+    background and flatten it away. Instead the ink is left out of the estimate
+    entirely and the paper is carried across it by inpainting, so an area with
+    no paper showing through inherits the paper around it and survives.
+    """
+    height, width = gray.shape
+    step = max(8, min(height, width) // tiles)
+    rows, columns = max(1, height // step), max(1, width // step)
+
+    threshold, _binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    paper = gray > threshold
+
+    coarse = np.zeros((rows, columns), np.uint8)
+    missing = np.zeros((rows, columns), np.uint8)
+    for row in range(rows):
+        for column in range(columns):
+            y0, x0 = row * step, column * step
+            y1 = height if row == rows - 1 else y0 + step
+            x1 = width if column == columns - 1 else x0 + step
+            window = gray[y0:y1, x0:x1]
+            visible = window[paper[y0:y1, x0:x1]]
+            if visible.size < 0.1 * window.size:
+                missing[row, column] = 255
+            else:
+                coarse[row, column] = int(np.median(visible))
+
+    if np.any(missing):
+        if np.all(missing):
+            return np.full_like(gray, 255)
+        coarse = cv2.inpaint(coarse, missing, 3, cv2.INPAINT_TELEA)
+
+    coarse = cv2.GaussianBlur(coarse, (0, 0), 1.2)
+    return cv2.resize(coarse, (width, height), interpolation=cv2.INTER_CUBIC)
+
+
+def flatten(gray: np.ndarray, *, minimum_spread: int = 25) -> tuple[np.ndarray, int]:
+    """Even out the paper so one threshold can serve the whole page."""
+    paper = estimate_paper(gray)
+    spread = int(np.percentile(paper, 98) - np.percentile(paper, 2))
+    if spread < minimum_spread:
+        return gray, spread
+    scaled = gray.astype(np.float32) / np.maximum(paper.astype(np.float32), 1.0)
+    return np.clip(scaled * 255.0, 0, 255).astype(np.uint8), spread
+
+
 def _binarise(gray: np.ndarray) -> np.ndarray:
     _threshold, binary = cv2.threshold(
         gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU
@@ -50,12 +99,32 @@ def _binarise(gray: np.ndarray) -> np.ndarray:
     return binary
 
 
-def despeckle(ink: np.ndarray, minimum_area: int = 4) -> np.ndarray:
+def despeckle(ink: np.ndarray, minimum_area: int = 4, minimum_side: float = 0.0) -> np.ndarray:
     count, labels, stats, _centroids = cv2.connectedComponentsWithStats(ink, 8)
     keep = np.zeros(count, dtype=bool)
     keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= minimum_area
+    if minimum_side > 0:
+        span = np.maximum(stats[1:, cv2.CC_STAT_WIDTH], stats[1:, cv2.CC_STAT_HEIGHT])
+        keep[1:] &= span >= minimum_side
     keep[0] = False
     return np.where(keep[labels], np.uint8(255), np.uint8(0))
+
+
+def remove_grain(ink: np.ndarray, stroke_width: float) -> np.ndarray:
+    """Drop marks smaller than the pen that drew the figure.
+
+    A worn scan carries grain that survives a fixed speck threshold and then
+    dominates every later statistic: on one of these figures the median
+    component was 8px tall, so the typical glyph height was measured from dirt.
+    Nothing narrower than the pen can be a mark the pen made.
+    """
+    if stroke_width <= 1.0:
+        return ink
+    return despeckle(
+        ink,
+        minimum_area=max(4, int(round((0.6 * stroke_width) ** 2))),
+        minimum_side=max(2.0, 0.6 * stroke_width),
+    )
 
 
 def estimate_stroke_width(ink: np.ndarray) -> float:
@@ -129,6 +198,7 @@ def load_page(path: Path, *, deskew: bool = True, skew_tolerance: float = 0.1) -
         raise SystemExit(f"Not a readable image: {path}")
 
     gray = _to_gray(raw)
+    gray, spread = flatten(gray)
     ink = despeckle(_binarise(gray))
 
     skew = estimate_skew(ink) if deskew else 0.0
@@ -137,6 +207,8 @@ def load_page(path: Path, *, deskew: bool = True, skew_tolerance: float = 0.1) -
         ink = despeckle(_binarise(gray))
     else:
         skew = 0.0
+
+    ink = remove_grain(ink, estimate_stroke_width(ink))
 
     background = "#ffffff"
     if np.any(ink == 0):
@@ -150,4 +222,5 @@ def load_page(path: Path, *, deskew: bool = True, skew_tolerance: float = 0.1) -
         skew_degrees=skew,
         background=background,
         source_path=Path(path),
+        paper_spread=spread,
     )
