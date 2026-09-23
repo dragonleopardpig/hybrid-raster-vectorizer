@@ -84,6 +84,7 @@ class Analysis:
     marker_sets: list = field(default_factory=list)
     frames: list = field(default_factory=list)
     legends: list = field(default_factory=list)
+    dashed: list = field(default_factory=list)
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
     alternatives: dict[int, list[str]] = field(default_factory=dict)
@@ -101,7 +102,7 @@ def analyse(path: Path, options: Options) -> Analysis:
         for tick in (detect_ticks(page, rule, ink=working, others=rules) for rule in rules)
         if tick
     ]
-    frames, traces, leftovers = partition(page, working, rules, ticks, text_height)
+    dashed, frames, traces, leftovers = partition(page, working, rules, ticks, text_height)
     blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
 
     marker_sets, consumed = find_marker_sets(blocks, page.stroke_width)
@@ -132,6 +133,7 @@ def analyse(path: Path, options: Options) -> Analysis:
     return Analysis(
         page, components, text_height, rules, ticks, traces, blocks,
         regions=regions, marker_sets=marker_sets, frames=frames, legends=legends,
+        dashed=dashed,
     )
 
 
@@ -545,6 +547,21 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
             )
         )
 
+    for index, line in enumerate(analysis.dashed):
+        elements.append(
+            ir.Dashed(
+                kind="dashed",
+                confidence=0.85,
+                provenance=f"{len(line.components)} marks on one period",
+                identifier=f"dashed-{index}",
+                x1=line.start[0], y1=line.start[1], x2=line.end[0], y2=line.end[1],
+                stroke_width=line.stroke_width,
+                dash=line.dash,
+                gap=line.gap,
+                marks=len(line.components),
+            )
+        )
+
     for index, frame in enumerate(analysis.frames):
         elements.append(
             ir.Frame(
@@ -716,6 +733,16 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
                 ),
             }
             for region in analysis.regions
+        ],
+        "dashed_lines": [
+            {
+                "from": [round(line.start[0], 1), round(line.start[1], 1)],
+                "to": [round(line.end[0], 1), round(line.end[1], 1)],
+                "dash_px": round(line.dash, 1),
+                "gap_px": round(line.gap, 1),
+                "marks": len(line.components),
+            }
+            for line in analysis.dashed
         ],
         "legends": [
             {

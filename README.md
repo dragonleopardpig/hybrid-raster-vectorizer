@@ -45,7 +45,14 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    `<symbol>` and placed with `<use>`. Once the shape is known from the copies
    out in the plot, the legend's sample is claimed by resemblance, since that one
    never stands alone.
-6. **Legends** — a closed box whose ink is about what tracing its boundary once
+6. **Broken lines** — collinear marks of one period become a single line with a
+   `stroke-dasharray`. A row of tick labels offers a fraction bar apiece —
+   short, straight, thin, horizontal and collinear — and every other test passes
+   them; what separates them is the period. Measured on these figures a real
+   broken line spaces its marks to within 11–12%, while a row of labels manages
+   only 31–81%. Dash *length* is deliberately not used, because the marks at
+   each end of a line are clipped and vary as much as a false chain's do.
+7. **Legends** — a closed box whose ink is about what tracing its boundary once
    would use, and whose hull fills its bounding box, is a frame. Without a box —
    which is the common case — a legend is found by the shape of its rows
    instead: samples sharing a column, each with its name immediately to the
@@ -55,27 +62,27 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    with each name carrying the series it names. A sample in a legend is taken
    out of the series it stands for: it is not a data point, and leaving it in
    would put a reading at the legend's own coordinates.
-7. **Curves** — axes, arrowheads and ticks are erased, and what remains is
+8. **Curves** — axes, arrowheads and ticks are erased, and what remains is
    traced along its centreline, per column where the stroke is a function of x
    and along the medial axis otherwise. Strokes that an erased axis cut apart
    are rejoined.
-8. **Fitting** — the trace is matched against straight lines, polynomials and
+9. **Fitting** — the trace is matched against straight lines, polynomials and
    sinusoids (period by spectrum, then a bracketed minimisation), and fitted
    with cubic Béziers by Schneider's algorithm to a tolerance set as a fraction
    of the pen width. The analytic reading is recorded on the path either way;
    `--idealise` redraws from it instead of from the ink.
-9. **Text** — leftover ink is grouped into labels. Fraction bars are found
+10. **Text** — leftover ink is grouped into labels. Fraction bars are found
    structurally, by being the only rule with ink both above and below, which is
    what separates them from an equals sign or a leading minus. Each bar claims
    its own numerator and denominator, so adjacent tick labels cannot run
    together.
-10. **Reading** — labels are routed to Tesseract or, through a persistent worker,
+11. **Reading** — labels are routed to Tesseract or, through a persistent worker,
    to PP-FormulaNet. A confident prose reading wins; anything else is treated as
    mathematics.
-11. **Typesetting** — the LaTeX is parsed and laid out using the real advance
+12. **Typesetting** — the LaTeX is parsed and laid out using the real advance
    widths of the matched font, then written as positioned SVG text. Repeated
    structures on one row are set in a single size.
-12. **Verification** — the finished SVG is rasterised with resvg and compared
+13. **Verification** — the finished SVG is rasterised with resvg and compared
    against the original ink, and the agreement is reported.
 
 The page is **transparent** and every mark paints with `currentColor`, so an
@@ -255,7 +262,7 @@ should be.
 
 | figure | paper spread | blocks | note |
 |---|---|---|---|
-| `complex.png` | 8 | 14 | clean; ink agreement 0.79 recall, dashed lines are the gap |
+| `complex.png` | 8 | 14 | clean; ink agreement 0.83 recall, 0.90 precision; both broken lines found |
 | `waves1.png` | 0 | 44 | clean |
 | `thicklens_cascade.png` | 42 | 38 | flattened |
 | `refraction.png` | 56 | 53 | flattened; grey stipple read as filled areas |
@@ -268,16 +275,21 @@ the point of the 25-level gate.
 
 Shading as dark as the ink is not separable this way and is not attempted.
 
+Finding the broken lines took `complex.png` from 0.787 recall to 0.833 and from
+0.894 precision to 0.904. Its geometry — axes, arrowheads, the vector, both
+dashed construction lines — now comes out right; its text does not, and the
+rotated label up the side of the axis is the worst of it.
+
 ## Still missing
 
 - A legend sample drawn hard against its label. It becomes one component with
   the label, and splitting at the emptiest column does not help, because a
   hollow sample's own interior is emptier than the gap beside it. The row is
   recorded with its name and no sample rather than dropped.
-- Dashed and dotted lines. Every scanned example has them, and each dash
-  currently becomes its own mark, which is the largest single gap in ink
-  agreement on a real figure.
-- Rotated text, such as a label written up the side of an axis.
+- Dash-dot and other mixed patterns: the period test expects one dash length,
+  so a line that alternates long and short is not recognised as one line.
+- Rotated text, such as a label written up the side of an axis. It is currently
+  grouped and read as if it ran across the page, which produces nonsense.
 - Embedded images, and areas filled with anything other than solid ink or
   evenly spaced ruling. Grey stipple is read as a filled area.
 - Multi-line prose blocks and rotated text.

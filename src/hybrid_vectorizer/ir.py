@@ -227,6 +227,29 @@ class MarkerField(Element):
 
 
 @dataclass
+class Dashed(Element):
+    """A line drawn as repeated marks, written as one line with a pattern."""
+
+    x1: float = 0.0
+    y1: float = 0.0
+    x2: float = 0.0
+    y2: float = 0.0
+    stroke_width: float = 1.0
+    dash: float = 1.0
+    gap: float = 1.0
+    marks: int = 0
+
+    def to_svg(self, indent: str) -> list[str]:
+        return [
+            f'{indent}<line class="dashed" {self.attributes()} data-marks="{self.marks}" '
+            f'x1="{_number(self.x1)}" y1="{_number(self.y1)}" '
+            f'x2="{_number(self.x2)}" y2="{_number(self.y2)}" '
+            f'stroke-width="{_number(self.stroke_width)}" '
+            f'stroke-dasharray="{_number(self.dash)} {_number(self.gap)}"/>'
+        ]
+
+
+@dataclass
 class Frame(Element):
     """A drawn box, such as the one around a legend."""
 
@@ -373,6 +396,7 @@ class Document:
             "    .italic { font-style: italic; }",
             "    .upright { font-style: normal; }",
             "    .frame { fill: none; stroke: currentColor; }",
+            "    .dashed { stroke: currentColor; fill: none; stroke-linecap: butt; }",
             "    .markers { color: inherit; }",
             "  </style>",
         ]

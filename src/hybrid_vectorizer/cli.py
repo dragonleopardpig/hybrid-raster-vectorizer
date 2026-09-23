@@ -94,6 +94,11 @@ def _run_convert(args: argparse.Namespace) -> None:
     for series in summary.get("marker_series", []):
         fill = "filled" if series["filled"] else "hollow"
         print(f"  markers     {series['count']} x {fill} {series['shape']}, {series['size_px']:.0f}px")
+    for line in summary.get("dashed_lines", []):
+        print(
+            f"  dashed      {line['from']} to {line['to']}, "
+            f"{line['marks']} marks, {line['dash_px']:.0f}/{line['gap_px']:.0f}px"
+        )
     for legend in summary.get("legends", []):
         tied = sum(1 for entry in legend["entries"] if entry["series"] is not None)
         print(

@@ -388,6 +388,74 @@ class ShapeTest(unittest.TestCase):
         self.assertFalse(has_border(self._component(bare), 2.0))
 
 
+class DashedLineTest(unittest.TestCase):
+    def _marks(self, image):
+        from hybrid_vectorizer.components import extract
+
+        return extract(image)
+
+    def _canvas(self):
+        return np.zeros((300, 600), np.uint8)
+
+    def test_a_broken_line_is_one_line(self):
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x in range(40, 520, 44):
+            cv2.line(image, (x, 150), (x + 30, 150), 255, 4)
+        lines, used = find_dashed_lines(self._marks(image), 4.0, (600, 300))
+        self.assertEqual(len(lines), 1)
+        line = lines[0]
+        self.assertGreater(line.length, 440)
+        self.assertAlmostEqual(line.dash, 31.0, delta=4.0)
+        self.assertAlmostEqual(line.gap, 14.0, delta=5.0)
+        self.assertEqual(len(used), len(line.components))
+
+    def test_a_diagonal_broken_line_is_found(self):
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for step in range(8):
+            x, y = 40 + step * 40, 40 + step * 28
+            cv2.line(image, (x, y), (x + 26, y + 18), 255, 4)
+        lines, _used = find_dashed_lines(self._marks(image), 4.0, (600, 300))
+        self.assertEqual(len(lines), 1)
+        self.assertGreater(lines[0].length, 280)
+
+    def test_marks_at_an_irregular_period_are_not_a_line(self):
+        """Tick labels offer a fraction bar apiece; only the period tells them apart."""
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x, width in ((40, 40), (120, 30), (230, 34), (300, 26), (420, 38)):
+            cv2.line(image, (x, 150), (x + width, 150), 255, 4)
+        lines, used = find_dashed_lines(self._marks(image), 4.0, (600, 300))
+        self.assertEqual(lines, [])
+        self.assertEqual(used, set())
+
+    def test_two_marks_are_not_a_line(self):
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x in (40, 120):
+            cv2.line(image, (x, 150), (x + 30, 150), 255, 4)
+        self.assertEqual(find_dashed_lines(self._marks(image), 4.0, (600, 300))[0], [])
+
+    def test_a_long_stroke_is_not_a_dash(self):
+        from hybrid_vectorizer.dashes import is_dash
+
+        image = self._canvas()
+        cv2.line(image, (20, 150), (580, 150), 255, 4)
+        self.assertFalse(is_dash(self._marks(image)[0], 4.0, (600, 300)))
+
+    def test_a_fat_blob_is_not_a_dash(self):
+        from hybrid_vectorizer.dashes import is_dash
+
+        image = self._canvas()
+        cv2.circle(image, (300, 150), 22, 255, -1)
+        self.assertFalse(is_dash(self._marks(image)[0], 4.0, (600, 300)))
+
+
 class FrameTest(unittest.TestCase):
     def _component(self, mask):
         from hybrid_vectorizer.components import Component
@@ -676,8 +744,35 @@ class NoRegressionTest(unittest.TestCase):
         self.assertEqual(analysis.marker_sets, [])
         self.assertEqual(analysis.frames, [])
         self.assertEqual(analysis.legends, [])
+        self.assertEqual(analysis.dashed, [], "tick-label bars are not a broken line")
         self.assertEqual(len(analysis.traces), 1)
         self.assertEqual(len(analysis.blocks), 11)
+
+
+@unittest.skipUnless((ROOT / "examples" / "complex.png").exists(), "scan missing")
+class ScannedFigureTest(unittest.TestCase):
+    """A real scan, where the broken lines were the largest gap."""
+
+    @classmethod
+    def setUpClass(cls):
+        from hybrid_vectorizer.convert import Options, analyse
+
+        cls.analysis = analyse(ROOT / "examples" / "complex.png", Options())
+
+    def test_both_broken_lines_are_found(self):
+        self.assertEqual(len(self.analysis.dashed), 2)
+        lengths = sorted(line.length for line in self.analysis.dashed)
+        self.assertGreater(lengths[0], 250)
+
+    def test_they_run_at_right_angles_to_each_other(self):
+        import numpy as np
+
+        angles = []
+        for line in self.analysis.dashed:
+            dx = line.end[0] - line.start[0]
+            dy = line.end[1] - line.start[1]
+            angles.append(abs(np.degrees(np.arctan2(dy, dx))) % 180.0)
+        self.assertAlmostEqual(abs(angles[0] - angles[1]) % 180.0, 90.0, delta=8.0)
 
 
 class OutputTest(unittest.TestCase):

@@ -233,17 +233,26 @@ def partition(
     rules: list[Rule],
     ticks: list[TickSet],
     text_height: float,
-) -> tuple[list, list[Trace], list[Component]]:
-    """Split what is left after the areas into frames, traced strokes and text."""
+) -> tuple[list, list, list[Trace], list[Component]]:
+    """Split what is left into broken lines, frames, traced strokes and text."""
+    from .dashes import find_dashed_lines
     from .shapes import Frame, is_frame
 
     furniture = furniture_mask(page, rules, ticks)
     residual = cv2.bitwise_and(working, cv2.bitwise_not(furniture))
+    pieces = extract(residual)
+
+    # Broken lines go first: each of their marks is small enough to be taken for
+    # a letter, and once grouped into a label the line cannot be recovered.
+    dashed, claimed = find_dashed_lines(
+        pieces, page.stroke_width, (page.width, page.height)
+    )
+    pieces = [piece for piece in pieces if id(piece) not in claimed]
 
     frames: list[Frame] = []
     traces: list[Trace] = []
     leftovers: list[Component] = []
-    for component in extract(residual):
+    for component in pieces:
         if is_frame(component, page.stroke_width):
             frames.append(
                 Frame(
@@ -261,7 +270,7 @@ def partition(
         leftovers.append(component)
 
     maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
-    return frames, chain(traces, maximum_gap=maximum_gap), leftovers
+    return dashed, frames, chain(traces, maximum_gap=maximum_gap), leftovers
 
 
 def extract_curves(
@@ -300,4 +309,4 @@ def extract_curves(
 
     traces = [trace for trace in (trace_component(piece) for piece in graphics) if trace is not None]
     maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
-    return frames, chain(traces, maximum_gap=maximum_gap), leftovers
+    return dashed, frames, chain(traces, maximum_gap=maximum_gap), leftovers
