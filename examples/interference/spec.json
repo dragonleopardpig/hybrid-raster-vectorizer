@@ -1,0 +1,86 @@
+{
+  "title": "Double-slit interference intensity graph",
+  "description": "Smooth vector reconstruction of a scanned graph with editable mathematical labels.",
+  "metadata": "FormulaOCR and Tesseract assisted text discovery. Ambiguous OCR was corrected from the equation and repeated tick-label structure. Geometry is represented with semantic SVG primitives.",
+  "source_image": "raster.png",
+  "canvas": {
+    "width": 1593,
+    "height": 717,
+    "background": "#ffffff"
+  },
+  "typography": {
+    "font_family": "TeX Gyre Termes",
+    "fallback_family": "serif"
+  },
+  "geometry": {
+    "arrow_size": 27,
+    "axis_width": 4,
+    "tick_width": 3.5,
+    "tick_top": 475,
+    "tick_bottom": 506,
+    "horizontal_axis": {
+      "x1": 68,
+      "x2": 1537,
+      "y": 491
+    },
+    "vertical_axis": {
+      "x": 763,
+      "y1": 553,
+      "y2": 105
+    },
+    "ticks": [278, 375, 472, 569, 666, 860, 957, 1054, 1151, 1248],
+    "curve": {
+      "start_minimum_x": 84,
+      "half_period": 97,
+      "baseline_y": 491,
+      "peak_y": 228,
+      "segments": 14,
+      "stroke_width": 7,
+      "clip": {
+        "x": 105,
+        "y": 190,
+        "width": 1345,
+        "height": 306
+      }
+    }
+  },
+  "ocr_regions": [
+    {
+      "name": "equation",
+      "engine": "formulaocr",
+      "crop": [620, 30, 340, 85]
+    },
+    {
+      "name": "negative_three_tick",
+      "engine": "formulaocr",
+      "crop": [405, 495, 120, 90]
+    },
+    {
+      "name": "caption",
+      "engine": "tesseract",
+      "crop": [660, 610, 215, 80],
+      "psm": 7
+    }
+  ],
+  "labels": [
+    {"type": "text", "id": "equation-main", "x": 648, "y": 87, "font_size": 32, "text": "I = 4I"},
+    {"type": "text", "id": "equation-i-subscript", "x": 738, "y": 96, "font_size": 20, "text": "0"},
+    {"type": "text", "id": "equation-cosine", "x": 769, "y": 87, "font_size": 32, "text": "cos"},
+    {"type": "text", "id": "equation-square", "x": 825, "y": 67, "font_size": 20, "text": "2"},
+    {"type": "fraction", "x": 872, "y": 48, "font_size": 23, "line_width": 68, "numerator_y": 17, "line_y": 24, "denominator_y": 48, "numerator": "yaπ", "denominator": "δλ₀"},
+
+    {"type": "text", "id": "intensity-main", "x": 770, "y": 215, "font_size": 31, "text": "4I"},
+    {"type": "text", "id": "intensity-subscript", "x": 804, "y": 223, "font_size": 19, "text": "0"},
+    {"type": "text", "id": "horizontal-axis-label", "x": 1467, "y": 530, "font_size": 31, "text": "y"},
+    {"type": "text", "id": "origin-label", "x": 763, "y": 581, "font_size": 29, "anchor": "middle", "text": "0"},
+
+    {"type": "fraction", "x": 472, "y": 529, "font_size": 25, "line_width": 94, "numerator": "−3λ₀δ", "denominator": "2a"},
+    {"type": "fraction", "x": 569, "y": 529, "font_size": 25, "line_width": 80, "numerator": "−λ₀δ", "denominator": "a"},
+    {"type": "fraction", "x": 666, "y": 529, "font_size": 25, "line_width": 80, "numerator": "−λ₀δ", "denominator": "2a"},
+    {"type": "fraction", "x": 860, "y": 529, "font_size": 25, "line_width": 64, "numerator": "λ₀δ", "denominator": "2a"},
+    {"type": "fraction", "x": 957, "y": 529, "font_size": 25, "line_width": 64, "numerator": "λ₀δ", "denominator": "a"},
+    {"type": "fraction", "x": 1054, "y": 529, "font_size": 25, "line_width": 78, "numerator": "3λ₀δ", "denominator": "2a"},
+
+    {"type": "text", "id": "caption", "class": "caption", "x": 763, "y": 669, "font_size": 37, "anchor": "middle", "text": "Fig. 6-7"}
+  ]
+}

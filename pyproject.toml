@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hybrid-raster-vectorizer"
+version = "0.1.0"
+description = "OCR-assisted semantic reconstruction of raster scientific figures as clean SVG"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+hybrid-vectorizer = "hybrid_vectorizer.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

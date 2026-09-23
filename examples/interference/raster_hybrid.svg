@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1593" height="717"
+     viewBox="0 0 1593 717"
+     role="img" aria-labelledby="title description">
+  <title id="title">Double-slit interference intensity graph</title>
+  <desc id="description">Smooth vector reconstruction of a scanned graph with editable mathematical labels.</desc>
+  <metadata>FormulaOCR and Tesseract assisted text discovery. Ambiguous OCR was corrected from the equation and repeated tick-label structure. Geometry is represented with semantic SVG primitives.</metadata>
+  <defs>
+    <marker id="axis-arrow" viewBox="0 0 12 12" refX="11" refY="6"
+            markerWidth="27"
+            markerHeight="27"
+            markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M0 0 L12 6 L0 12 Z" fill="#000"/>
+    </marker>
+    <clipPath id="curve-clip">
+      <rect x="105" y="190"
+            width="1345" height="306"/>
+    </clipPath>
+  </defs>
+  <rect width="1593" height="717" fill="#ffffff"/>
+  <style>
+    .curve { fill: none; stroke: #000; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
+    .axis { fill: none; stroke: #000; stroke-width: 4; stroke-linecap: square; marker-end: url(#axis-arrow); }
+    .tick { stroke: #000; stroke-width: 3.5; stroke-linecap: square; }
+    .math { fill: #000; font-family: "TeX Gyre Termes", serif; font-style: italic; font-weight: 600; }
+    .caption { fill: #000; font-family: "TeX Gyre Termes", serif; font-weight: 700; }
+    .fraction-line { fill: none; stroke: #000; stroke-width: 2.6; stroke-linecap: square; }
+  </style>
+  <g id="plot-geometry">
+    <path class="curve" clip-path="url(#curve-clip)" d="M84 491 C116.333 491 148.667 228 181 228 C213.333 228 245.667 491 278 491 C310.333 491 342.667 228 375 228 C407.333 228 439.667 491 472 491 C504.333 491 536.667 228 569 228 C601.333 228 633.667 491 666 491 C698.333 491 730.667 228 763 228 C795.333 228 827.667 491 860 491 C892.333 491 924.667 228 957 228 C989.333 228 1021.667 491 1054 491 C1086.333 491 1118.667 228 1151 228 C1183.333 228 1215.667 491 1248 491 C1280.333 491 1312.667 228 1345 228 C1377.333 228 1409.667 491 1442 491"/>
+    <line class="axis" x1="68" y1="491"
+          x2="1537" y2="491"/>
+    <line class="axis" x1="763" y1="553"
+          x2="763" y2="105"/>
+    <g id="ticks">
+      <line class="tick" x1="278" y1="475" x2="278" y2="506"/>
+      <line class="tick" x1="375" y1="475" x2="375" y2="506"/>
+      <line class="tick" x1="472" y1="475" x2="472" y2="506"/>
+      <line class="tick" x1="569" y1="475" x2="569" y2="506"/>
+      <line class="tick" x1="666" y1="475" x2="666" y2="506"/>
+      <line class="tick" x1="860" y1="475" x2="860" y2="506"/>
+      <line class="tick" x1="957" y1="475" x2="957" y2="506"/>
+      <line class="tick" x1="1054" y1="475" x2="1054" y2="506"/>
+      <line class="tick" x1="1151" y1="475" x2="1151" y2="506"/>
+      <line class="tick" x1="1248" y1="475" x2="1248" y2="506"/>
+    </g>
+  </g>
+  <g id="labels">
+    <text id="equation-main" class="math" x="648" y="87" font-size="32">I = 4I</text>
+    <text id="equation-i-subscript" class="math" x="738" y="96" font-size="20">0</text>
+    <text id="equation-cosine" class="math" x="769" y="87" font-size="32">cos</text>
+    <text id="equation-square" class="math" x="825" y="67" font-size="20">2</text>
+    <g class="fraction" transform="translate(872 48)" text-anchor="middle">
+      <text class="math" x="0" y="17" font-size="23">yaπ</text>
+      <path class="fraction-line" d="M-34 24H34"/>
+      <text class="math" x="0" y="48" font-size="23">δλ₀</text>
+    </g>
+    <text id="intensity-main" class="math" x="770" y="215" font-size="31">4I</text>
+    <text id="intensity-subscript" class="math" x="804" y="223" font-size="19">0</text>
+    <text id="horizontal-axis-label" class="math" x="1467" y="530" font-size="31">y</text>
+    <text id="origin-label" class="math" x="763" y="581" font-size="29" text-anchor="middle">0</text>
+    <g class="fraction" transform="translate(472 529)" text-anchor="middle">
+      <text class="math" x="0" y="0" font-size="25">−3λ₀δ</text>
+      <path class="fraction-line" d="M-47 9H47"/>
+      <text class="math" x="0" y="38" font-size="25">2a</text>
+    </g>
+    <g class="fraction" transform="translate(569 529)" text-anchor="middle">
+      <text class="math" x="0" y="0" font-size="25">−λ₀δ</text>
+      <path class="fraction-line" d="M-40 9H40"/>
+      <text class="math" x="0" y="38" font-size="25">a</text>
+    </g>
+    <g class="fraction" transform="translate(666 529)" text-anchor="middle">
+      <text class="math" x="0" y="0" font-size="25">−λ₀δ</text>
+      <path class="fraction-line" d="M-40 9H40"/>
+      <text class="math" x="0" y="38" font-size="25">2a</text>
+    </g>
+    <g class="fraction" transform="translate(860 529)" text-anchor="middle">
+      <text class="math" x="0" y="0" font-size="25">λ₀δ</text>
+      <path class="fraction-line" d="M-32 9H32"/>
+      <text class="math" x="0" y="38" font-size="25">2a</text>
+    </g>
+    <g class="fraction" transform="translate(957 529)" text-anchor="middle">
+      <text class="math" x="0" y="0" font-size="25">λ₀δ</text>
+      <path class="fraction-line" d="M-32 9H32"/>
+      <text class="math" x="0" y="38" font-size="25">a</text>
+    </g>
+    <g class="fraction" transform="translate(1054 529)" text-anchor="middle">
+      <text class="math" x="0" y="0" font-size="25">3λ₀δ</text>
+      <path class="fraction-line" d="M-39 9H39"/>
+      <text class="math" x="0" y="38" font-size="25">2a</text>
+    </g>
+    <text id="caption" class="caption" x="763" y="669" font-size="37" text-anchor="middle">Fig. 6-7</text>
+  </g>
+</svg>

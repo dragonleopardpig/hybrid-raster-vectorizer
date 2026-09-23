@@ -1,0 +1,48 @@
+{
+  "nodes": {
+    "formulaocr-offline": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1789305548,
+        "narHash": "sha256-ksYecIZrEemmJFlrHwm86toiTTsD6ozQ0Xd5uimrpVk=",
+        "owner": "dragonleopardpig",
+        "repo": "formulaocr-offline",
+        "rev": "7f155b23efe06bea0ee1b9786e022215d9aa1690",
+        "type": "github"
+      },
+      "original": {
+        "owner": "dragonleopardpig",
+        "repo": "formulaocr-offline",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1790046670,
+        "narHash": "sha256-MYiI+CzL0tuWgRPjGsKCDHqYs2T3OzMlMQWOYWG0qso=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "6774f7bc253789b113a4f39285dc0fa100abeacc",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "formulaocr-offline": "formulaocr-offline",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}
