@@ -1,0 +1,8 @@
+inputs:
+  nixpkgs:
+    url: github:NixOS/nixpkgs/nixos-unstable
+  formulaocr-offline:
+    url: github:dragonleopardpig/formulaocr-offline
+    inputs:
+      nixpkgs:
+        follows: nixpkgs

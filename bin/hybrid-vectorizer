@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Convenience wrapper so the CLI is on PATH inside the devenv shell.
+exec python -m hybrid_vectorizer "$@"

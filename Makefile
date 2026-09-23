@@ -1,7 +1,14 @@
 PYTHON ?= python3
 EXAMPLE := examples/interference
 
-.PHONY: render inspect test
+.PHONY: convert render inspect test
+
+convert:
+	PYTHONPATH=src $(PYTHON) -m hybrid_vectorizer convert \
+		$(EXAMPLE)/raster.png \
+		-o build/auto.svg \
+		--report build/auto.report.json \
+		--preview build/auto.png
 
 render:
 	PYTHONPATH=src $(PYTHON) -m hybrid_vectorizer render \

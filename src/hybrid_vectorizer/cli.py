@@ -6,6 +6,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from .convert import Options, convert
 from .renderer import load_spec, render_file
 
 
@@ -45,6 +46,84 @@ def _run_render(args: argparse.Namespace) -> None:
             [inkscape, str(output_path), f"--export-filename={preview_path}"],
             check=True,
         )
+
+
+def _run_convert(args: argparse.Namespace) -> None:
+    options = Options(
+        deskew=not args.no_deskew,
+        bezier_tolerance=args.bezier_tolerance,
+        idealise=args.idealise,
+        confidence_threshold=args.confidence,
+        raster_fallback=args.raster_fallback,
+        substitute_glyphs=args.substitute_glyphs,
+        font_family=args.font,
+        use_formula_ocr=not args.no_formula_ocr,
+        verify=not args.no_verify,
+    )
+    document = convert(args.input.resolve(), options)
+
+    output_path = args.output.resolve()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(document.to_svg(), encoding="utf-8")
+
+    report_path = args.report.resolve() if args.report else output_path.with_suffix(".report.json")
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(document.report, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    summary = document.report
+    print(f"wrote {output_path}")
+    print(f"wrote {report_path}")
+    print(f"  font        {summary['font']['chosen']}")
+    for curve in summary["curves"]:
+        print(
+            f"  curve {curve['curve']}     {curve['segments']} bezier segments, "
+            f"model {curve['analytic_model']} residual {curve['analytic_residual_px']}px"
+        )
+    for tick in summary["ticks"]:
+        print(f"  ticks       {tick['count']} on the {tick['orientation']} axis, spacing {tick['spacing_px']}px")
+    for label in summary["labels"]:
+        note = f"  <- {label['corrections']}" if label["corrections"] else ""
+        ambiguous = label.get("ambiguous_glyphs") or []
+        if ambiguous:
+            note += f"  [{len(ambiguous)} unverified glyph(s); see the report]"
+        print(f"  {label['id']:<10} {label['confidence']:.2f}  {label['text']}{note}")
+    if "agreement" in summary:
+        scores = summary["agreement"]
+        print(
+            f"  agreement   recall {scores['recall']:.3f}  precision {scores['precision']:.3f} "
+            f"(within {scores['tolerance_px']}px)"
+        )
+    if summary["needs_review"]:
+        print(f"  review      {', '.join(summary['needs_review'])}")
+
+    if args.outlined:
+        inkscape = _require("inkscape")
+        outlined_path = args.outlined.resolve()
+        outlined_path.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            [
+                inkscape,
+                str(output_path),
+                "--export-type=svg",
+                "--export-plain-svg",
+                "--export-text-to-path",
+                f"--export-filename={outlined_path}",
+            ],
+            check=True,
+        )
+
+    if args.preview:
+        preview_path = args.preview.resolve()
+        preview_path.parent.mkdir(parents=True, exist_ok=True)
+        renderer = shutil.which("resvg")
+        command = (
+            [renderer, str(output_path), str(preview_path)]
+            if renderer
+            else [_require("inkscape"), str(output_path), f"--export-filename={preview_path}"]
+        )
+        subprocess.run(command, check=True)
 
 
 def _run_inspect(args: argparse.Namespace) -> None:
@@ -98,6 +177,39 @@ def _parser() -> argparse.ArgumentParser:
     render.add_argument("--outlined", type=Path, help="Also create an SVG with text converted to paths")
     render.add_argument("--preview", type=Path, help="Also create a PNG preview")
     render.set_defaults(handler=_run_render)
+
+    convert_parser = subparsers.add_parser(
+        "convert", help="Automatically reconstruct a raster figure as semantic SVG"
+    )
+    convert_parser.add_argument("input", type=Path)
+    convert_parser.add_argument("-o", "--output", required=True, type=Path)
+    convert_parser.add_argument("--report", type=Path, help="Where to write the JSON report")
+    convert_parser.add_argument("--outlined", type=Path, help="Also write an SVG with text as paths")
+    convert_parser.add_argument("--preview", type=Path, help="Also write a PNG preview")
+    convert_parser.add_argument("--font", help="Force a font family instead of matching one")
+    convert_parser.add_argument(
+        "--bezier-tolerance", type=float, default=0.25,
+        help="Curve fit tolerance as a fraction of the pen width (default 0.25)",
+    )
+    convert_parser.add_argument(
+        "--idealise", action="store_true",
+        help="Redraw curves from the fitted analytic model instead of the traced ink",
+    )
+    convert_parser.add_argument(
+        "--confidence", type=float, default=0.55, help="Below this, a label is flagged for review"
+    )
+    convert_parser.add_argument(
+        "--raster-fallback", action="store_true",
+        help="Embed the original pixels for labels below the confidence threshold",
+    )
+    convert_parser.add_argument(
+        "--substitute-glyphs", action="store_true",
+        help="Re-read confusable glyphs against installed fonts (measured unreliable)",
+    )
+    convert_parser.add_argument("--no-deskew", action="store_true")
+    convert_parser.add_argument("--no-formula-ocr", action="store_true")
+    convert_parser.add_argument("--no-verify", action="store_true")
+    convert_parser.set_defaults(handler=_run_convert)
 
     inspect = subparsers.add_parser("inspect", help="Run configured OCR probes against the source image")
     inspect.add_argument("spec", type=Path)
