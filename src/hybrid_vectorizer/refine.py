@@ -215,66 +215,148 @@ def distinguishable(path: str, first: str, second: str, threshold: float = 0.78)
     return shape_iou(a, b) < threshold
 
 
-@dataclass
-class Correction:
-    node: object
-    score: float
-    changes: list[str]
-    unresolved: list[str] = field(default_factory=list)
+def _advance(fonts: FontSet, glyph) -> float:
+    return max(1.0, fonts.metrics.advance(glyph.text, glyph.size))
 
 
-def correct(
-    node: tex.Row,
-    ink: np.ndarray,
-    fonts: FontSet,
-    target_width: float,
-    *,
-    script_slots: int | None = None,
-    glyph_margin: float = 0.035,
-    script_margin: float = 0.02,
-) -> Correction:
-    """Test the readings the pixels can actually decide between, and keep the best.
+def _align(glyphs: list, components: list, fonts: FontSet) -> list[tuple]:
+    """Match a row of characters to a row of ink, in order.
 
-    Every candidate is re-rendered in the matched typeface and measured against
-    the ink, so a correction has to earn its place by explaining the drawing
-    better than the recogniser's original reading did.
+    Absolute positions drift along a line whenever the typeface in hand is not
+    the one that was printed, so pairing by predicted coordinate goes wrong the
+    further into an expression it gets. Reading order does not drift: the n-th
+    mark is the n-th character, and the only question is which marks ran
+    together. That is settled by widths.
     """
-    import copy
+    if not glyphs or not components or len(components) > len(glyphs):
+        return []
 
-    def evaluate(candidate: object) -> float:
-        size = fit_size(candidate, fonts.metrics, target_width)
-        rendered = render_box(tex.layout(candidate, fonts.metrics, size), fonts)
-        if rendered is None:
-            return 0.0
-        return shape_iou(ink, rendered)
+    widths = [_advance(fonts, glyph) for glyph in glyphs]
+    prefix = [0.0]
+    for width in widths:
+        prefix.append(prefix[-1] + width)
 
-    best = copy.deepcopy(node)
-    best_score = evaluate(best)
+    def cost(component, first: int, last: int) -> float:
+        wanted = prefix[last] - prefix[first]
+        actual = float(component.width)
+        return abs(actual - wanted) / max(actual, wanted, 1.0)
+
+    n, m = len(glyphs), len(components)
+    best = np.full((n + 1, m + 1), np.inf)
+    back = np.zeros((n + 1, m + 1), dtype=int)
+    best[0, 0] = 0.0
+    for j in range(1, m + 1):
+        for i in range(j, n - (m - j) + 1):
+            for k in range(j - 1, i):
+                value = best[k, j - 1] + cost(components[j - 1], k, i)
+                if value < best[i, j]:
+                    best[i, j] = value
+                    back[i, j] = k
+    if not np.isfinite(best[n, m]):
+        return []
+
+    pairs: list[tuple] = []
+    i = n
+    for j in range(m, 0, -1):
+        k = int(back[i, j])
+        pairs.append((components[j - 1], glyphs[k:i]))
+        i = k
+    return list(reversed(pairs))
+
+
+def correspond(
+    node: tex.Row,
+    fonts: FontSet,
+    size: float,
+    x: float,
+    baseline: float,
+    components: list,
+    bar_y: float | None = None,
+) -> list[tuple]:
+    """Pair every laid-out character with the ink it was drawn over."""
+    box = tex.layout(node, fonts.metrics, size, merge=False)
+    singles = [
+        glyph
+        for glyph in box.glyphs
+        if len(glyph.text) == 1 and isinstance(glyph.origin, tex.Run) and not glyph.text.isspace()
+    ]
+    if bar_y is None:
+        groups = [(singles, list(components))]
+    else:
+        groups = [
+            (
+                [g for g in singles if baseline + g.y <= bar_y],
+                [c for c in components if c.bottom <= bar_y + 2],
+            ),
+            (
+                [g for g in singles if baseline + g.y > bar_y],
+                [c for c in components if c.bottom > bar_y + 2],
+            ),
+        ]
+
+    pairs: list[tuple] = []
+    for glyphs, marks in groups:
+        pairs.extend(
+            _align(
+                sorted(glyphs, key=lambda item: item.x),
+                sorted(marks, key=lambda item: item.x),
+                fonts,
+            )
+        )
+    return pairs
+
+
+def demote_spurious_scripts(
+    node: tex.Row,
+    fonts: FontSet,
+    size: float,
+    x: float,
+    baseline: float,
+    components: list,
+    body_height: float,
+    bar_y: float | None = None,
+) -> list[str]:
+    """Undo a subscript the ink draws at full size, on that glyph's own evidence.
+
+    Counting how many glyphs sit off the baseline and comparing with the reading
+    is too blunt: where a subscript touches its base they share one mark and the
+    count silently loses it, which then demotes a genuine subscript. Asking per
+    script, and declining to answer when base and script share ink, keeps the
+    correction to the cases the drawing actually settles.
+    """
     changes: list[str] = []
-    unresolved: list[str] = []
+    for _ in range(4):
+        pairs = correspond(node, fonts, size, x, baseline, components, bar_y)
+        owner = {id(glyph): component for component, glyphs in pairs for glyph in glyphs}
+        shared = {
+            id(glyph)
+            for component, glyphs in pairs
+            if len(glyphs) > 1
+            for glyph in glyphs
+        }
+        box = tex.layout(node, fonts.metrics, size, merge=False)
+        by_run = {id(g.origin): g for g in box.glyphs if g.origin is not None}
 
-    # The ink shows how many glyphs really sit off the baseline. If the reading
-    # claims more scripts than that, the surplus ones are the recogniser's.
-    if script_slots is not None:
-        surplus = _script_count(best) - script_slots
-        while surplus > 0:
-            candidates = []
-            for index in range(len(_scripts(best))):
-                trial = copy.deepcopy(best)
-                targets = _scripts(trial)
-                if index >= len(targets) or not _flatten_script(trial, targets[index]):
-                    continue
-                candidates.append((evaluate(trial), trial))
-            if not candidates:
+        demoted = None
+        for entry in _scripts(node):
+            if entry.subscript is None or entry.superscript is not None:
+                continue
+            script_runs, base_runs = _runs(entry.subscript), _runs(entry.base)
+            if not script_runs or not base_runs:
+                continue
+            script_glyph = by_run.get(id(script_runs[0]))
+            if script_glyph is None or id(script_glyph) in shared:
+                continue  # base and script share ink: the drawing cannot say
+            component = owner.get(id(script_glyph))
+            if component is None or component.height < 0.78 * body_height:
+                continue  # genuinely smaller, so genuinely a script
+            if _flatten_script(node, entry):
+                demoted = script_glyph.text
                 break
-            score, trial = max(candidates, key=lambda item: item[0])
-            if score <= best_score - script_margin:
-                break
-            best, best_score = trial, score
-            changes.append("script demoted to baseline")
-            surplus -= 1
-
-    return Correction(node=best, score=best_score, changes=changes, unresolved=unresolved)
+        if demoted is None:
+            break
+        changes.append(f"{demoted!r} is drawn at full size, so it is not a subscript")
+    return changes
 
 
 def glyph_slots(
@@ -284,42 +366,41 @@ def glyph_slots(
     x: float,
     baseline: float,
     components: list,
+    bar_y: float | None = None,
 ) -> tuple[list, list[str]]:
-    """Pair each laid-out character with the one ink component it covers."""
+    """Pair each character with its own ink, cutting marks that ran together.
+
+    Marks that cannot be a glyph at this size, such as a fraction bar, must not
+    be offered here: cutting one into pieces yields solid blocks that resemble
+    each other perfectly and would poison any comparison built on them.
+    """
+    from .components import split_into
     from .consensus import Slot
 
-    box = tex.layout(node, fonts.metrics, size, merge=False)
     slots: list[Slot] = []
     ambiguous: list[str] = []
 
-    for glyph in box.glyphs:
-        if len(glyph.text) != 1 or not isinstance(glyph.origin, tex.Run):
-            continue
-        left = x + glyph.x
-        right = left + fonts.metrics.advance(glyph.text, glyph.size)
-        bottom = baseline + glyph.y
-        pad = 0.35 * glyph.size
-        matches = [
-            component
-            for component in components
-            if left - pad <= (component.x + component.right) / 2.0 <= right + pad
-            and abs(component.bottom - bottom) <= 0.45 * glyph.size
-            # A mark far smaller or wider than the glyph is a different symbol
-            # that merely sits nearby, such as a minus beside a lambda.
-            and 0.3 * glyph.size <= component.height <= 1.5 * glyph.size
-            and component.width <= 1.8 * max(1.0, right - left)
-        ]
+    def note(glyph, reason: str) -> None:
         confusion = next((group for group in CONFUSIONS if glyph.text in group), None)
-        if len(matches) != 1:
-            # Touching glyphs share one component, so this reading cannot be
-            # checked against the ink at all. Say so rather than imply it was.
-            if confusion is not None:
-                ambiguous.append(f"{glyph.text} (unchecked: not separable from its neighbours)")
-            continue
-
-        slots.append(Slot(label=-1, run=glyph.origin, character=glyph.text, component=matches[0]))
         if confusion is not None:
-            ambiguous.append(f"{glyph.text} (could be {'/'.join(sorted(confusion - {glyph.text}))})")
+            ambiguous.append(f"{glyph.text} ({reason})")
+
+    for component, glyphs in correspond(node, fonts, size, x, baseline, components, bar_y):
+        if len(glyphs) == 1:
+            pieces, clean = [component], True
+        else:
+            pieces, clean = split_into(component, len(glyphs))
+        if not clean or len(pieces) != len(glyphs):
+            for glyph in glyphs:
+                note(glyph, "unchecked: cutting it apart would pass through a stroke")
+            continue
+        for glyph, piece in zip(glyphs, pieces):
+            slots.append(Slot(label=-1, run=glyph.origin, character=glyph.text, component=piece))
+            confusion = next((group for group in CONFUSIONS if glyph.text in group), None)
+            if confusion is not None:
+                ambiguous.append(
+                    f"{glyph.text} (could be {'/'.join(sorted(confusion - {glyph.text}))})"
+                )
     return slots, ambiguous
 
 

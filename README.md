@@ -56,11 +56,12 @@ On `examples/interference/raster.png`, a scan of a mid-century textbook figure:
 
 | | result |
 |---|---|
-| ink agreement | recall 0.979, precision 0.959 within 3px |
+| ink agreement | recall 0.986, precision 0.956 within 3px |
 | axes | both found, with the arrowhead on the correct end of each |
 | ticks | all 10, spacing 96.93px, snapped to a lattice |
 | curve | one stroke, 47 Bézier segments, recognised as a sinusoid |
 | labels | 11 blocks, all six tick fractions bound correctly |
+| label text | 4 of 11 exactly right, 0.925 of characters right |
 
 The curve's analytic residual is 10.8px against an amplitude of 264px. That is
 not a fitting failure: the figure is hand-drawn, and its humps drift by about
@@ -69,22 +70,54 @@ of 95.0px matches the 97.0px a cos² of the detected period predicts. The
 reconstruction therefore follows the ink, and reports the analytic reading
 separately.
 
-**Text is where the limits are.** The recogniser reads the δ in this figure as
-`s` and one of them as `B`, and the converter does not silently fix either.
+**Text is where the limits are.** Every remaining character error in the example
+is one symbol: the recogniser reads δ as `s`, once as `π` and once as `B`. The
+converter does not silently fix any of them.
 
-Correcting a glyph by re-rendering candidates in installed fonts and comparing
-shapes was implemented and then **measured against known-correct glyphs: it
-chose the right letter in about one case in six.** The scanned typeface is not
-installed, and the margin between a candidate and its confusable twin is smaller
-than the difference between two typefaces, so the comparison ranks fonts rather
-than letterforms. It is available as `--substitute-glyphs` and is off by
-default, because a confident wrong answer is worse than an honest uncertain one.
+Two ways of fixing it were built and measured, and **both are worse than leaving
+the reading alone**, so both are off by default.
+
+*Per glyph, against installed fonts* (`--substitute-glyphs`): re-render each
+candidate letter and keep the best match. Measured against known-correct glyphs
+it chose the right letter in about **one case in six**. The scanned typeface is
+not installed, and the gap between a candidate and its confusable twin is
+smaller than the gap between two typefaces, so the score ranks fonts rather than
+letterforms.
+
+*The whole alphabet at once* (`--solve-alphabet`): cluster every isolated glyph
+in the figure, then assign letters to clusters jointly, one typeface having to
+explain all of them. The clustering is sound — it compares ink with ink from the
+same scan, so no typeface enters into it — but naming the clusters still needs an
+external model. Four scorings were measured against 12 clusters of known
+identity:
+
+| scoring | letters right | δ recovered | font chosen |
+|---|---|---|---|
+| raw overlap, one letter per cluster | 2/12 | 0/3 | Impact |
+| raw overlap, independent | 1/12 | 0/3 | Impact |
+| z-scored, independent | 1/12 | 0/3 | Noto Sans CJK HK |
+| z-scored, one letter per cluster | 3/12 | 0/3 | UbuntuMono Nerd Font |
+
+Trusting the recogniser scores 9/12 on the same clusters. Two premises behind
+the joint solve turned out to be false: raw overlap rewards whichever typeface
+lays down the most ink, which is why a heavy display face keeps winning; and
+"different shapes are different letters" does not hold, because the same letter
+lands in several clusters at subscript and full size. This is kept for figures
+whose typeface *is* installed, and reported honestly rather than enabled.
 
 What *is* used instead:
 
-- **Structure from the ink.** The number of glyphs genuinely drawn off the
-  baseline is measured; when a reading claims more subscripts than that, the
-  surplus is demoted. This is what corrects `a_{\pi}` to `aπ`.
+- **Order, not position.** Characters are paired with ink in reading order,
+  because predicted coordinates drift along a line whenever the typeface in hand
+  is not the one that was printed. Where letters ran together, the reading says
+  how many are in the mark and the column profile says where to cut — and a cut
+  that would pass through a stroke is refused, leaving the glyphs reported as
+  unchecked instead of producing pieces that resemble each other whatever they
+  came from.
+- **Structure from the ink.** A subscript is demoted when *that* glyph's own
+  mark is drawn at full size. Counting scripts across a label instead was tried
+  and is too blunt: where a subscript touches its base they share one mark, the
+  count loses it, and a genuine subscript gets demoted.
 - **Agreement between repeated symbols.** Comparing one scanned glyph with
   another from the *same* figure has no typeface mismatch, so identical symbols
   are clustered (complete-link, so every member resembles every other) and made
@@ -133,7 +166,8 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 | `--bezier-tolerance F` | curve fit tolerance as a fraction of the pen width (default 0.25) |
 | `--confidence F` | below this, a label is listed for review (default 0.55) |
 | `--raster-fallback` | embed original pixels for labels below that threshold |
-| `--substitute-glyphs` | enable font-template glyph correction (measured unreliable) |
+| `--substitute-glyphs` | per-glyph correction against installed fonts (measured unreliable) |
+| `--solve-alphabet` | name every distinct shape at once against installed fonts (measured unreliable) |
 | `--no-deskew`, `--no-formula-ocr`, `--no-verify` | skip a stage |
 
 ## Still missing
@@ -142,5 +176,10 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 - Multi-line prose blocks and rotated text.
 - Occlusion recovery beyond rejoining strokes an axis cut apart.
 - Curve families other than lines, polynomials and sinusoids.
-- Glyph identification good enough to correct a recogniser, which needs the
-  scanned typeface itself rather than whatever fonts happen to be installed.
+- Glyph identification good enough to correct a recogniser. Both measured
+  attempts above failed for the same reason, so the next thing worth trying is
+  not another scoring but a different model: learning the letterforms from the
+  document itself, or a recogniser that reports per-character alternatives with
+  calibrated confidence instead of one string.
+- Segmenting letters that genuinely overlap, which a straight vertical cut
+  cannot do.

@@ -56,6 +56,7 @@ def _run_convert(args: argparse.Namespace) -> None:
         confidence_threshold=args.confidence,
         raster_fallback=args.raster_fallback,
         substitute_glyphs=args.substitute_glyphs,
+        solve_alphabet=args.solve_alphabet,
         font_family=args.font,
         use_formula_ocr=not args.no_formula_ocr,
         verify=not args.no_verify,
@@ -205,6 +206,10 @@ def _parser() -> argparse.ArgumentParser:
     convert_parser.add_argument(
         "--substitute-glyphs", action="store_true",
         help="Re-read confusable glyphs against installed fonts (measured unreliable)",
+    )
+    convert_parser.add_argument(
+        "--solve-alphabet", action="store_true",
+        help="Name every distinct shape at once against installed fonts (measured unreliable)",
     )
     convert_parser.add_argument("--no-deskew", action="store_true")
     convert_parser.add_argument("--no-formula-ocr", action="store_true")

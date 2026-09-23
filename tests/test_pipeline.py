@@ -221,6 +221,98 @@ class ConsensusTest(unittest.TestCase):
         self.assertEqual(slots[2].run.text, "B")
 
 
+class SplittingTest(unittest.TestCase):
+    def _component(self, mask):
+        from hybrid_vectorizer.components import Component
+
+        return Component(
+            label=1, x=0, y=0, width=mask.shape[1], height=mask.shape[0],
+            area=int(np.count_nonzero(mask)), centroid=(0.0, 0.0), mask=mask,
+        )
+
+    def test_a_gap_between_letters_is_a_clean_cut(self):
+        from hybrid_vectorizer.components import split_into
+
+        mask = np.zeros((30, 44), dtype=np.uint8)
+        cv2.rectangle(mask, (2, 4), (18, 26), 255, 3)
+        cv2.rectangle(mask, (26, 4), (42, 26), 255, 3)
+        pieces, clean = split_into(self._component(mask), 2)
+        self.assertEqual(len(pieces), 2)
+        self.assertTrue(clean)
+
+    def test_cutting_through_a_stroke_is_not_clean(self):
+        from hybrid_vectorizer.components import split_into
+
+        mask = np.zeros((30, 44), dtype=np.uint8)
+        cv2.rectangle(mask, (2, 4), (42, 26), 255, -1)
+        _pieces, clean = split_into(self._component(mask), 2)
+        self.assertFalse(clean, "a solid block has no gap to cut at")
+
+    def test_one_piece_is_returned_unchanged(self):
+        from hybrid_vectorizer.components import split_into
+
+        mask = np.zeros((20, 12), dtype=np.uint8)
+        mask[4:16, 2:10] = 255
+        pieces, clean = split_into(self._component(mask), 1)
+        self.assertEqual(len(pieces), 1)
+        self.assertTrue(clean)
+
+
+class AlignmentTest(unittest.TestCase):
+    """Order-based pairing must survive a typeface whose widths are wrong."""
+
+    def setUp(self):
+        from hybrid_vectorizer.refine import build_font_set
+
+        self.fonts = build_font_set("DejaVu Serif", bold=False)
+        if self.fonts is None:
+            self.skipTest("no usable font installed")
+
+    def _component(self, x, width, height=20):
+        from hybrid_vectorizer.components import Component
+
+        mask = np.zeros((height, width), dtype=np.uint8)
+        mask[2 : height - 2, 1 : width - 1] = 255
+        return Component(
+            label=1, x=x, y=0, width=width, height=height,
+            area=int(np.count_nonzero(mask)), centroid=(x + width / 2.0, height / 2.0),
+            mask=mask,
+        )
+
+    def test_each_letter_gets_its_own_mark(self):
+        from hybrid_vectorizer.refine import correspond
+
+        node = tex.parse("abc")
+        size = 20.0
+        widths = [self.fonts.metrics.advance(c, size) for c in "abc"]
+        cursor, marks = 0.0, []
+        for width in widths:
+            marks.append(self._component(int(cursor), max(2, int(width))))
+            cursor += width
+        pairs = correspond(node, self.fonts, size, 0.0, 20.0, marks)
+        self.assertEqual([len(glyphs) for _c, glyphs in pairs], [1, 1, 1])
+        self.assertEqual("".join(g[0].text for _c, g in pairs), "abc")
+
+    def test_letters_that_ran_together_share_one_mark(self):
+        from hybrid_vectorizer.refine import correspond
+
+        node = tex.parse("abc")
+        size = 20.0
+        widths = [self.fonts.metrics.advance(c, size) for c in "abc"]
+        joined = self._component(0, max(2, int(widths[0] + widths[1])))
+        last = self._component(int(widths[0] + widths[1]), max(2, int(widths[2])))
+        pairs = correspond(node, self.fonts, size, 0.0, 20.0, [joined, last])
+        self.assertEqual([len(glyphs) for _c, glyphs in pairs], [2, 1])
+        self.assertEqual("".join(g.text for g in pairs[0][1]), "ab")
+
+    def test_more_marks_than_letters_is_refused(self):
+        from hybrid_vectorizer.refine import correspond
+
+        marks = [self._component(i * 10, 8) for i in range(5)]
+        pairs = correspond(tex.parse("ab"), self.fonts, 20.0, 0.0, 20.0, marks)
+        self.assertEqual(pairs, [])
+
+
 class LoadingTest(unittest.TestCase):
     def test_a_missing_file_is_reported_plainly(self):
         from hybrid_vectorizer.preprocess import load_page

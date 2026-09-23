@@ -69,6 +69,69 @@ def extract(ink: np.ndarray) -> list[Component]:
     return components
 
 
+def split_into(
+    component: Component, pieces: int, *, minimum_width: int = 4, clean_fraction: float = 0.3
+) -> tuple[list[Component], bool]:
+    """Cut one component into a known number of glyphs at its thinnest columns.
+
+    Touching letters share a component, so nothing can be said about either of
+    them. How many are in there is not guessed: the recogniser's reading says
+    how many glyphs were laid out over this ink, and the column profile says
+    where they join.
+
+    Also reports whether every cut fell in a genuine gap. A cut that passes
+    through a stroke splits one letter in two, and pieces like that are worse
+    than no evidence: they look alike whatever they came from.
+    """
+    if pieces <= 1 or component.width < pieces * minimum_width:
+        return [component], True
+
+    profile = (component.mask > 0).sum(axis=0).astype(float)
+    cuts: list[int] = []
+    for _ in range(pieces - 1):
+        best: tuple[float, int] | None = None
+        for column in range(minimum_width, component.width - minimum_width):
+            if any(abs(column - cut) < minimum_width for cut in cuts):
+                continue
+            value = float(profile[column])
+            if best is None or value < best[0]:
+                best = (value, column)
+        if best is None:
+            break
+        cuts.append(best[1])
+
+    ink_columns = profile[profile > 0]
+    reference = float(np.median(ink_columns)) if ink_columns.size else 0.0
+    clean = all(float(profile[cut]) <= clean_fraction * reference for cut in cuts)
+
+    cuts.sort()
+    result: list[Component] = []
+    for left, right in zip([0] + cuts, cuts + [component.width]):
+        window = component.mask[:, left:right]
+        ys, xs = np.nonzero(window)
+        if xs.size == 0:
+            continue
+        x0, x1 = int(xs.min()), int(xs.max()) + 1
+        y0, y1 = int(ys.min()), int(ys.max()) + 1
+        mask = window[y0:y1, x0:x1]
+        result.append(
+            Component(
+                label=component.label,
+                x=component.x + left + x0,
+                y=component.y + y0,
+                width=x1 - x0,
+                height=y1 - y0,
+                area=int(np.count_nonzero(mask)),
+                centroid=(
+                    float(component.x + left + x0 + (x1 - x0) / 2.0),
+                    float(component.y + y0 + (y1 - y0) / 2.0),
+                ),
+                mask=mask.copy(),
+            )
+        )
+    return (result or [component]), clean
+
+
 def median_text_height(components: list[Component], page_height: int) -> float:
     """Typical glyph height, taken from components small enough to be glyphs."""
     candidates = [

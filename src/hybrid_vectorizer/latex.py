@@ -76,7 +76,9 @@ def _tokenise(source: str) -> list[str]:
         source = source[2:-2]
     elif source.startswith("$") and source.endswith("$"):
         source = source[1:-1]
-    return [token for token in _TOKEN.findall(source) if not token.isspace() or token == " "]
+    # A bare space between symbols is how the recogniser separates them, not
+    # spacing the author asked for; explicit commands like \\, still carry it.
+    return [token for token in _TOKEN.findall(source) if not token.isspace()]
 
 
 class _Parser:

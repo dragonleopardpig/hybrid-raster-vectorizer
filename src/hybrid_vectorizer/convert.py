@@ -17,20 +17,22 @@ from .fonts import FontFace, list_faces, match_font
 from .ocr import FormulaReader, Reading, isolate, looks_like_prose, read_tesseract
 from .preprocess import Page, load_page
 from .primitives import Rule, TickSet, detect_rules, detect_ticks
+from .alphabet import apply as apply_alphabet
+from .alphabet import build_clusters, solve
 from .consensus import reconcile
 from .refine import (
     FontSet,
     agreement,
     build_font_set,
-    correct,
     fit_size,
     glyph_slots,
+    demote_spurious_scripts,
     rasterise,
     render_box,
     shape_iou,
     substitute_glyphs,
 )
-from .textlayout import Block, group_blocks, script_components
+from .textlayout import Block, group_blocks
 from .tracing import Trace, extract_curves
 
 
@@ -43,6 +45,7 @@ class Options:
     confidence_threshold: float = 0.55
     raster_fallback: bool = False
     substitute_glyphs: bool = False
+    solve_alphabet: bool = False
     font_family: str | None = None
     font_candidates: int = 400
     use_formula_ocr: bool = True
@@ -207,6 +210,20 @@ class Prepared:
         return len(self.node.items) == 1 and isinstance(self.node.items[0], tex.Frac)
 
 
+def solve_alphabet(slots: list, options: Options) -> list[tuple[int, str]]:
+    """Name every distinct shape in the figure at once, against installed fonts.
+
+    Measured on the example this is worse than leaving the reading alone, so it
+    is off unless asked for; see the README for the numbers.
+    """
+    clusters = build_clusters(slots)
+    families = sorted({face.family for face in list_faces()})
+    solution = solve(clusters, families)
+    if solution is None:
+        return []
+    return apply_alphabet(solution, clusters)
+
+
 def _harmonise(prepared: list[Prepared], text_height: float) -> None:
     """Repeated structures on one row are set in one size; make them agree.
 
@@ -243,25 +260,9 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
 
         ink = _block_ink(page, block)
         node = _measure_node(reading, block)
-        outcome = correct(
-            node,
-            ink,
-            fonts,
-            float(block.width),
-            script_slots=len(script_components(block)),
-        )
-        size, score = _best_size(outcome.node, fonts, ink, float(block.width))
+        size, score = _best_size(node, fonts, ink, float(block.width))
         prepared.append(
-            Prepared(
-                index=index,
-                block=block,
-                reading=reading,
-                node=outcome.node,
-                size=size,
-                score=score,
-                changes=list(outcome.changes),
-                unresolved=list(outcome.unresolved),
-            )
+            Prepared(index=index, block=block, reading=reading, node=node, size=size, score=score)
         )
 
     _harmonise(prepared, analysis.text_height)
@@ -281,8 +282,25 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
             x = float(block.x)
         placements[entry.index] = (x, baseline)
 
+        glyph_ink = [
+            component for component in block.components if component not in block.bars
+        ]
+        bar_y = (block.bars[0].y + block.bars[0].height / 2.0) if block.bars else None
+        demotions = demote_spurious_scripts(
+            entry.node, fonts, size, x, baseline, glyph_ink, block.body_height(), bar_y
+        )
+        if demotions:
+            entry.changes.extend(demotions)
+            entry.size = size = _best_size(entry.node, fonts, _block_ink(page, block), float(block.width))[0]
+            box = tex.layout(entry.node, fonts.metrics, size)
+            if entry.pure_fraction and block.bars:
+                bar = block.bars[0]
+                baseline = bar.y + bar.height / 2.0 + tex.AXIS_RATIO * size
+                x = block.x + (block.width - box.width) / 2.0
+            placements[entry.index] = (x, baseline)
+
         found, ambiguous = glyph_slots(
-            entry.node, fonts, size, x, baseline, block.components
+            entry.node, fonts, size, x, baseline, glyph_ink, bar_y
         )
         for slot in found:
             slot.label = entry.index
@@ -290,6 +308,8 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         entry.unresolved.extend(ambiguous)
 
     corrections: list[tuple[int, str]] = []
+    if options.solve_alphabet:
+        corrections.extend(solve_alphabet(slots, options))
     if options.substitute_glyphs:
         corrections.extend(substitute_glyphs(slots, fonts))
     corrections.extend(reconcile(slots))
