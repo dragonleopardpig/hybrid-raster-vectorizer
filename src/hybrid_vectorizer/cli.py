@@ -58,6 +58,8 @@ def _run_convert(args: argparse.Namespace) -> None:
         substitute_glyphs=args.substitute_glyphs,
         solve_alphabet=args.solve_alphabet,
         font_family=args.font,
+        background=args.background,
+        ensemble=args.ensemble,
         use_formula_ocr=not args.no_formula_ocr,
         verify=not args.no_verify,
     )
@@ -86,6 +88,9 @@ def _run_convert(args: argparse.Namespace) -> None:
         print(f"  ticks       {tick['count']} on the {tick['orientation']} axis, spacing {tick['spacing_px']}px")
     for label in summary["labels"]:
         note = f"  <- {label['corrections']}" if label["corrections"] else ""
+        others = label.get("other_readings") or []
+        if others:
+            note += f"  [read {label['reading_confidence']:.0%} of the time, {len(others)} other reading(s)]"
         ambiguous = label.get("ambiguous_glyphs") or []
         if ambiguous:
             note += f"  [{len(ambiguous)} unverified glyph(s); see the report]"
@@ -189,6 +194,10 @@ def _parser() -> argparse.ArgumentParser:
     convert_parser.add_argument("--preview", type=Path, help="Also write a PNG preview")
     convert_parser.add_argument("--font", help="Force a font family instead of matching one")
     convert_parser.add_argument(
+        "--background",
+        help="Paint a solid background (default: transparent, inheriting the page)",
+    )
+    convert_parser.add_argument(
         "--bezier-tolerance", type=float, default=0.25,
         help="Curve fit tolerance as a fraction of the pen width (default 0.25)",
     )
@@ -210,6 +219,10 @@ def _parser() -> argparse.ArgumentParser:
     convert_parser.add_argument(
         "--solve-alphabet", action="store_true",
         help="Name every distinct shape at once against installed fonts (measured unreliable)",
+    )
+    convert_parser.add_argument(
+        "--ensemble", type=int, default=1, metavar="N",
+        help="Read each formula N ways and report how often they agree (slower)",
     )
     convert_parser.add_argument("--no-deskew", action="store_true")
     convert_parser.add_argument("--no-formula-ocr", action="store_true")

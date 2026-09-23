@@ -462,9 +462,18 @@ def rasterise(svg_text: str, width: int, height: int) -> np.ndarray | None:
         completed = subprocess.run(command, check=False, capture_output=True, text=True)
         if completed.returncode != 0 or not target.exists():
             return None
-        image = cv2.imread(str(target), cv2.IMREAD_GRAYSCALE)
+        image = cv2.imread(str(target), cv2.IMREAD_UNCHANGED)
     if image is None:
         return None
+
+    # The page is transparent by default, so flatten it onto white before
+    # thresholding; otherwise every empty pixel reads as ink.
+    if image.ndim == 3 and image.shape[2] == 4:
+        alpha = image[:, :, 3:4].astype(np.float32) / 255.0
+        image = (image[:, :, :3].astype(np.float32) * alpha + 255.0 * (1.0 - alpha)).astype(np.uint8)
+    if image.ndim == 3:
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
     _threshold, binary = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
     return binary
 

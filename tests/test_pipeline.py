@@ -1,6 +1,7 @@
 """Tests for the automatic pipeline, on synthetic figures and the real example."""
 
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import cv2
@@ -17,6 +18,7 @@ from hybrid_vectorizer.textlayout import find_fraction_bars, group_blocks
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "interference" / "raster.png"
+SVG_NAMESPACE = "{http://www.w3.org/2000/svg}"
 
 
 def blank(width=800, height=400):
@@ -311,6 +313,62 @@ class AlignmentTest(unittest.TestCase):
         marks = [self._component(i * 10, 8) for i in range(5)]
         pairs = correspond(tex.parse("ab"), self.fonts, 20.0, 0.0, 20.0, marks)
         self.assertEqual(pairs, [])
+
+
+class OutputTest(unittest.TestCase):
+    def _document(self, **kwargs):
+        from hybrid_vectorizer import ir
+
+        document = ir.Document(width=100, height=50, **kwargs)
+        document.geometry.append(
+            ir.Axis(kind="axis", x1=0, y1=25, x2=100, y2=25, stroke_width=2, arrow_end=True)
+        )
+        return document
+
+    def test_the_page_is_transparent_by_default(self):
+        content = self._document().to_svg()
+        root = ET.fromstring(content)
+        self.assertEqual(root.findall(f"{SVG_NAMESPACE}rect"), [])
+
+    def test_a_background_can_be_asked_for(self):
+        content = self._document(background="#ffffff").to_svg()
+        root = ET.fromstring(content)
+        rects = root.findall(f"{SVG_NAMESPACE}rect")
+        self.assertEqual(len(rects), 1)
+        self.assertEqual(rects[0].attrib["fill"], "#ffffff")
+
+    def test_every_mark_paints_with_currentcolor(self):
+        content = self._document().to_svg()
+        self.assertNotRegex(content, r'(fill|stroke)(=")#|(fill|stroke): #')
+        self.assertIn("currentColor", content)
+
+    def test_both_themes_are_described(self):
+        content = self._document().to_svg()
+        self.assertIn("prefers-color-scheme: dark", content)
+        self.assertIn("svg { color:", content)
+
+    def test_the_document_still_parses_as_svg(self):
+        root = ET.fromstring(self._document().to_svg())
+        self.assertEqual(root.tag, f"{SVG_NAMESPACE}svg")
+
+
+class EnsembleTest(unittest.TestCase):
+    def test_augmentations_are_distinct_and_keep_the_original_first(self):
+        from hybrid_vectorizer.ocr import augmentations
+
+        image = np.full((40, 90), 255, dtype=np.uint8)
+        cv2.putText(image, "ab", (6, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 0, 2)
+        variants = augmentations(image, 5)
+        self.assertEqual(len(variants), 5)
+        self.assertTrue(np.array_equal(variants[0], image))
+        shapes = {(v.shape, int(v.sum())) for v in variants}
+        self.assertGreaterEqual(len(shapes), 4, "augmentations must actually differ")
+
+    def test_asking_for_one_returns_only_the_original(self):
+        from hybrid_vectorizer.ocr import augmentations
+
+        image = np.full((20, 20), 255, dtype=np.uint8)
+        self.assertEqual(len(augmentations(image, 1)), 1)
 
 
 class LoadingTest(unittest.TestCase):

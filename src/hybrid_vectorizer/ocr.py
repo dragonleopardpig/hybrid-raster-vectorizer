@@ -138,6 +138,41 @@ class FormulaReader:
         return Reading(text=response["formula"].strip(), engine="formulaocr", confidence=0.75)
 
 
+def augmentations(image: np.ndarray, count: int) -> list[np.ndarray]:
+    """Small redrawings of one crop, to ask the recogniser the same thing twice.
+
+    A model that reads the same mark differently at a different scale or stroke
+    weight is telling us it is unsure; one that never wavers is confident, even
+    when it is confidently wrong. Agreement across these is the only confidence
+    the recogniser offers, since it returns a single string.
+    """
+    variants = [image]
+    ink = 255 - image
+    builders = [
+        lambda: cv2.resize(image, None, fx=0.7, fy=0.7, interpolation=cv2.INTER_AREA),
+        lambda: cv2.resize(image, None, fx=1.6, fy=1.6, interpolation=cv2.INTER_CUBIC),
+        lambda: 255 - cv2.erode(ink, np.ones((3, 3), np.uint8)),
+        lambda: 255 - cv2.dilate(ink, np.ones((3, 3), np.uint8)),
+        lambda: _rotated(image, -1.5),
+        lambda: _rotated(image, 1.5),
+        lambda: cv2.filter2D(image, -1, np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])),
+    ]
+    for build in builders:
+        if len(variants) >= count:
+            break
+        variants.append(build())
+    return variants[:count]
+
+
+def _rotated(image: np.ndarray, degrees: float) -> np.ndarray:
+    height, width = image.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), degrees, 1.0)
+    return cv2.warpAffine(
+        image, matrix, (width, height),
+        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255,
+    )
+
+
 _WORDLIKE = re.compile(r"^[A-Za-z][A-Za-z.'-]*$")
 
 

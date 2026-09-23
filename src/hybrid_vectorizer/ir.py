@@ -132,6 +132,12 @@ class Label(Element):
 
 @dataclass
 class RasterFallback(Element):
+    """Original pixels for a label the pipeline will not vouch for.
+
+    Written with an alpha channel so it sits on a transparent page like every
+    other mark, and inverted under a dark theme so the ink stays visible.
+    """
+
     x: float = 0.0
     y: float = 0.0
     width: float = 0.0
@@ -153,7 +159,9 @@ class RasterFallback(Element):
 class Document:
     width: float
     height: float
-    background: str = "#ffffff"
+    background: str | None = None
+    light_ink: str = "#111111"
+    dark_ink: str = "#eeeeee"
     title: str = "Reconstructed figure"
     description: str = ""
     font_family: str = "serif"
@@ -188,18 +196,29 @@ class Document:
             "    </marker>",
             "  </defs>",
             "  <style>",
-            "    .curve { fill: none; stroke: #000; stroke-linecap: round; stroke-linejoin: round; }",
-            "    .axis { stroke: #000; color: #000; stroke-linecap: butt; }",
-            "    .tick { stroke: #000; stroke-linecap: butt; }",
-            "    .fraction-line { stroke: #000; fill: none; stroke-linecap: butt; }",
-            f'    .glyph {{ fill: #000; font-family: "{_attribute(self.font_family)}", {self.fallback_family};'
+            "    /* Every mark paints with currentColor, so an inline SVG simply takes",
+            "       the colour of the text around it. The rules below only set a",
+            "       sensible default for the file viewed on its own. */",
+            f"    svg {{ color: {_attribute(self.light_ink)}; }}",
+            "    @media (prefers-color-scheme: dark) {",
+            f"      svg {{ color: {_attribute(self.dark_ink)}; }}",
+            "      .unverified { filter: invert(1); }",
+            "    }",
+            "    .curve { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }",
+            "    .axis { stroke: currentColor; stroke-linecap: butt; }",
+            "    .tick { stroke: currentColor; stroke-linecap: butt; }",
+            "    .fraction-line { stroke: currentColor; fill: none; stroke-linecap: butt; }",
+            f'    .glyph {{ fill: currentColor; font-family: "{_attribute(self.font_family)}", {self.fallback_family};'
             f" font-weight: {weight}; }}",
             "    .italic { font-style: italic; }",
             "    .upright { font-style: normal; }",
             "  </style>",
-            f'  <rect width="{_number(self.width)}" height="{_number(self.height)}" '
-            f'fill="{_attribute(self.background)}"/>',
         ]
+        if self.background:
+            head.append(
+                f'  <rect width="{_number(self.width)}" height="{_number(self.height)}" '
+                f'fill="{_attribute(self.background)}"/>'
+            )
 
         body = ['  <g id="geometry">']
         for element in self.geometry:

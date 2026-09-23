@@ -50,6 +50,12 @@ and every decision it makes is recorded in a JSON report beside the SVG.
 9. **Verification** — the finished SVG is rasterised with resvg and compared
    against the original ink, and the agreement is reported.
 
+The page is **transparent** and every mark paints with `currentColor`, so an
+inline SVG simply takes the colour of the text around it. Viewed on its own the
+file defaults to dark ink and switches to light ink under
+`prefers-color-scheme: dark`; a label kept as raster pixels is inverted to match.
+`--background COLOR` paints a solid page instead.
+
 ## What it gets right, and what it does not
 
 On `examples/interference/raster.png`, a scan of a mid-century textbook figure:
@@ -83,6 +89,21 @@ it chose the right letter in about **one case in six**. The scanned typeface is
 not installed, and the gap between a candidate and its confusable twin is
 smaller than the gap between two typefaces, so the score ranks fonts rather than
 letterforms.
+
+*A second recogniser with Greek* : Tesseract ships 129 languages here,
+including `ell` and `grc`. On the isolated glyph it returned `M`, `|`, `X`, `Ι`
+and `ν` — **0 of 3** across eight combinations of language, page-segmentation
+mode and character whitelist. Its LSTM expects lines of text, not a single
+16px mark, so this is not wired in.
+
+*Asking the maths model repeatedly* (`--ensemble N`): read each formula from N
+slightly redrawn crops — rescaled, thinned, thickened, rotated, sharpened — and
+take the majority. Across 56 readings of this figure **δ never once appeared**.
+That is worth knowing: the recogniser is not uncertain about that letterform, it
+is confidently wrong, and no amount of resampling will shake it loose. What the
+ensemble does give is honest confidence: it marks the equation as read only 60%
+of the time and one tick label 80%, which are exactly the two readings that are
+genuinely unstable. It costs one OCR pass per variant, so it is off by default.
 
 *The whole alphabet at once* (`--solve-alphabet`): cluster every isolated glyph
 in the figure, then assign letters to clusters jointly, one typeface having to
@@ -166,6 +187,8 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 | `--bezier-tolerance F` | curve fit tolerance as a fraction of the pen width (default 0.25) |
 | `--confidence F` | below this, a label is listed for review (default 0.55) |
 | `--raster-fallback` | embed original pixels for labels below that threshold |
+| `--background COLOR` | paint a solid page instead of leaving it transparent |
+| `--ensemble N` | read each formula N ways and report how often they agree |
 | `--substitute-glyphs` | per-glyph correction against installed fonts (measured unreliable) |
 | `--solve-alphabet` | name every distinct shape at once against installed fonts (measured unreliable) |
 | `--no-deskew`, `--no-formula-ocr`, `--no-verify` | skip a stage |
@@ -176,10 +199,13 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 - Multi-line prose blocks and rotated text.
 - Occlusion recovery beyond rejoining strokes an axis cut apart.
 - Curve families other than lines, polynomials and sinusoids.
-- Glyph identification good enough to correct a recogniser. Both measured
-  attempts above failed for the same reason, so the next thing worth trying is
-  not another scoring but a different model: learning the letterforms from the
-  document itself, or a recogniser that reports per-character alternatives with
-  calibrated confidence instead of one string.
+- Glyph identification good enough to correct a recogniser. Four approaches
+  have now been measured — per-glyph font templates, a joint alphabet solve, a
+  second recogniser with Greek, and an ensemble over redrawn crops — and none
+  beats leaving the reading alone. The obstacle is the same each time: no model
+  on hand has seen this typeface at this size, and the one that reads the maths
+  is confidently wrong rather than uncertain. What would actually help is a
+  recogniser that emits per-character alternatives with probabilities, or
+  training on the document's own letterforms; guessing harder will not.
 - Segmenting letters that genuinely overlap, which a straight vertical cut
   cannot do.

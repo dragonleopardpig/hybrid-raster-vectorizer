@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -14,7 +15,14 @@ from . import latex as tex
 from .components import Component, extract, median_text_height
 from .fitting import choose_model, fit_bezier, path_data
 from .fonts import FontFace, list_faces, match_font
-from .ocr import FormulaReader, Reading, isolate, looks_like_prose, read_tesseract
+from .ocr import (
+    FormulaReader,
+    Reading,
+    augmentations,
+    isolate,
+    looks_like_prose,
+    read_tesseract,
+)
 from .preprocess import Page, load_page
 from .primitives import Rule, TickSet, detect_rules, detect_ticks
 from .alphabet import apply as apply_alphabet
@@ -46,6 +54,8 @@ class Options:
     raster_fallback: bool = False
     substitute_glyphs: bool = False
     solve_alphabet: bool = False
+    background: str | None = None
+    ensemble: int = 1
     font_family: str | None = None
     font_candidates: int = 400
     use_formula_ocr: bool = True
@@ -63,6 +73,7 @@ class Analysis:
     blocks: list[Block]
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
+    alternatives: dict[int, list[str]] = field(default_factory=dict)
 
 
 def analyse(path: Path, options: Options) -> Analysis:
@@ -110,7 +121,24 @@ def read_blocks(analysis: Analysis, options: Options) -> None:
 
     with FormulaReader() as reader:
         for index in pending:
-            analysis.readings[index] = reader.read(crops[index])
+            if options.ensemble <= 1:
+                analysis.readings[index] = reader.read(crops[index])
+                continue
+            counts = Counter()
+            for variant in augmentations(crops[index], options.ensemble):
+                text = reader.read(variant).text
+                if text:
+                    counts[text] += 1
+            if not counts:
+                analysis.readings[index] = Reading("", "formulaocr", 0.0)
+                continue
+            text, hits = counts.most_common(1)[0]
+            analysis.readings[index] = Reading(
+                text, "formulaocr", hits / max(1, sum(counts.values()))
+            )
+            analysis.alternatives[index] = [
+                other for other, _n in counts.most_common()[1:]
+            ]
 
 
 def _prose_samples(analysis: Analysis) -> list[tuple[np.ndarray, str]]:
@@ -331,7 +359,9 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         confidence = float(np.clip(0.35 + 0.9 * score, 0.0, 0.99))
 
         if confidence < options.confidence_threshold and options.raster_fallback:
-            success, buffer = cv2.imencode(".png", 255 - _block_ink(page, block))
+            alpha = _block_ink(page, block)
+            black = np.zeros_like(alpha)
+            success, buffer = cv2.imencode(".png", cv2.merge([black, black, black, alpha]))
             if success:
                 labels.append(
                     ir.RasterFallback(
@@ -466,7 +496,7 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
     document = ir.Document(
         width=float(page.width),
         height=float(page.height),
-        background=page.background,
+        background=options.background,
         title=f"Reconstruction of {path.name}",
         description=(
             f"Automatic vector reconstruction: {len(analysis.traces)} traced curve(s), "
@@ -484,6 +514,7 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
         "source": str(path),
         "size": [page.width, page.height],
         "stroke_width": round(page.stroke_width, 2),
+        "detected_background": page.background,
         "skew_degrees": round(page.skew_degrees, 3),
         "text_height": round(analysis.text_height, 1),
         "font": {
@@ -508,6 +539,18 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
                 "engine": getattr(element, "engine", ""),
                 "confidence": round(element.confidence, 2),
                 "corrections": element.provenance,
+                "reading_confidence": round(
+                    next(
+                        (entry.reading.confidence for entry in analysis.prepared
+                         if f"label-{entry.index}" == element.identifier),
+                        0.0,
+                    ), 2,
+                ),
+                "other_readings": next(
+                    (analysis.alternatives.get(entry.index, []) for entry in analysis.prepared
+                     if f"label-{entry.index}" == element.identifier),
+                    [],
+                ),
                 "ambiguous_glyphs": next(
                     (entry.unresolved for entry in analysis.prepared
                      if f"label-{entry.index}" == element.identifier),
