@@ -122,9 +122,11 @@ def _rotate(image: np.ndarray, degrees: float, border: int) -> np.ndarray:
 
 
 def load_page(path: Path, *, deskew: bool = True, skew_tolerance: float = 0.1) -> Page:
+    if not Path(path).is_file():
+        raise SystemExit(f"No such image: {path}")
     raw = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
     if raw is None:
-        raise SystemExit(f"Unable to read image: {path}")
+        raise SystemExit(f"Not a readable image: {path}")
 
     gray = _to_gray(raw)
     ink = despeckle(_binarise(gray))

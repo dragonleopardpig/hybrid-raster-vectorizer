@@ -7,3 +7,6 @@ result
 
 .devenv/
 .direnv/
+/result.svg
+/result.report.json
+/result.png

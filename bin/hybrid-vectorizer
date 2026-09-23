@@ -1,3 +1,31 @@
 #!/usr/bin/env bash
-# Convenience wrapper so the CLI is on PATH inside the devenv shell.
-exec python -m hybrid_vectorizer "$@"
+# Run the CLI from anywhere. Inside the dev shell this just execs; outside it,
+# it re-enters the shell once so that `./bin/hybrid-vectorizer ...` works from a
+# plain terminal without the caller having to know about nix or devenv.
+set -euo pipefail
+
+root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+export PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}"
+
+python=$(command -v python3 || command -v python || true)
+if [ -n "$python" ] && "$python" -c 'import cv2, numpy, scipy, skimage, fontTools' 2>/dev/null; then
+    exec "$python" -m hybrid_vectorizer "$@"
+fi
+
+if [ -n "${HYBRID_VECTORIZER_BOOTSTRAPPED:-}" ]; then
+    echo "hybrid-vectorizer: the dev shell is missing OpenCV, SciPy, scikit-image or fontTools." >&2
+    echo "Enter it yourself with 'devenv shell' or 'nix develop' and try again." >&2
+    exit 1
+fi
+export HYBRID_VECTORIZER_BOOTSTRAPPED=1
+
+if command -v nix >/dev/null 2>&1; then
+    exec nix develop --no-warn-dirty "$root" --command "$root/bin/hybrid-vectorizer" "$@"
+fi
+if command -v devenv >/dev/null 2>&1; then
+    exec devenv shell -- "$root/bin/hybrid-vectorizer" "$@"
+fi
+
+echo "hybrid-vectorizer: needs nix or devenv, or a Python with OpenCV, SciPy," >&2
+echo "scikit-image, Pillow and fontTools on the path." >&2
+exit 1

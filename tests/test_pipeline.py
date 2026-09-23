@@ -221,6 +221,24 @@ class ConsensusTest(unittest.TestCase):
         self.assertEqual(slots[2].run.text, "B")
 
 
+class LoadingTest(unittest.TestCase):
+    def test_a_missing_file_is_reported_plainly(self):
+        from hybrid_vectorizer.preprocess import load_page
+
+        with self.assertRaises(SystemExit) as raised:
+            load_page(Path("/nonexistent/figure.png"))
+        self.assertIn("No such image", str(raised.exception))
+
+    @unittest.skipUnless(EXAMPLE.exists(), "example figure is not present")
+    def test_a_real_image_loads_and_is_measured(self):
+        from hybrid_vectorizer.preprocess import load_page
+
+        page = load_page(EXAMPLE)
+        self.assertEqual((page.width, page.height), (1593, 717))
+        self.assertGreater(page.stroke_width, 1.0)
+        self.assertEqual(page.background, "#ffffff")
+
+
 @unittest.skipUnless(EXAMPLE.exists(), "example figure is not present")
 class ExampleGeometryTest(unittest.TestCase):
     """The detection stages run without OCR, so this stays fast and offline."""

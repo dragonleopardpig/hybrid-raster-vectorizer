@@ -5,10 +5,12 @@ axes, ticks, fitted curves and typeset labels — rather than tracing every nois
 pixel boundary.
 
 ```sh
-hybrid-vectorizer convert raster.png -o result.svg
+./bin/hybrid-vectorizer convert raster.png -o result.svg
 ```
 
-Everything runs offline once the OCR model is present.
+That works from an ordinary terminal: the wrapper re-enters the dev shell itself
+if it is not already in one. Everything runs offline once the OCR model is
+present.
 
 ## What the converter does
 
