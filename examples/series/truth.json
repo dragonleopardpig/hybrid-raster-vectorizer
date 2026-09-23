@@ -1,0 +1,11 @@
+{
+  "legends": 1,
+  "framed": false,
+  "legend_entries": 2,
+  "marker_sets": 2,
+  "points_per_set": 8,
+  "names": [
+    "alpha",
+    "beta"
+  ]
+}

@@ -15,7 +15,7 @@ from . import latex as tex
 from .components import Component, extract, median_text_height
 from .fitting import choose_model, fit_bezier, path_data
 from .fonts import FontFace, list_faces, match_font
-from .legend import Legend, assemble
+from .legend import Legend, assemble, find_unframed
 from .ocr import (
     FormulaReader,
     Reading,
@@ -112,30 +112,22 @@ def analyse(path: Path, options: Options) -> Analysis:
         for component in block.components
     }
 
-    # Only inside a frame is a mark claimed by resemblance alone. Out in the
-    # open a repeated letter resembles a marker just as well, and claiming one
-    # would take a glyph out of a word.
-    if marker_sets and frames:
-        inside = [
-            component
-            for component in leftovers
-            if id(component) not in claimed
-            and any(
-                frame.contains(
-                    component.x + component.width / 2.0,
-                    component.y + component.height / 2.0,
-                )
-                for frame in frames
-            )
-        ]
-        claimed |= set(claim_similar(marker_sets, inside))
-        leftovers = [c for c in leftovers if id(c) not in claimed]
-        blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
-    else:
-        leftovers = [c for c in leftovers if id(c) not in claimed]
-        blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
+    # A legend sample sits as close to its name as a letter sits to its
+    # neighbours, so isolation cannot find it. Resemblance can, but only while
+    # the test is strict enough that a letter cannot pass it.
+    if marker_sets:
+        loose = [component for component in leftovers if id(component) not in claimed]
+        claimed |= set(claim_similar(marker_sets, loose))
+    leftovers = [component for component in leftovers if id(component) not in claimed]
+    blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
 
     legends = assemble(frames, marker_sets, blocks)
+    spoken_for = {index for legend in legends for index in legend.blocks}
+    legends += [
+        legend
+        for legend in find_unframed(marker_sets, blocks, text_height)
+        if not (legend.blocks & spoken_for)
+    ]
 
     return Analysis(
         page, components, text_height, rules, ticks, traces, blocks,
@@ -727,7 +719,8 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
         ],
         "legends": [
             {
-                "box": [legend.frame.x, legend.frame.y, legend.frame.width, legend.frame.height],
+                "box": [round(value, 1) for value in legend.bounds],
+                "framed": legend.framed,
                 "entries": [
                     {
                         "series": entry.series,

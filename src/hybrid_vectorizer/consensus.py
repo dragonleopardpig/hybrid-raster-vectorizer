@@ -47,6 +47,33 @@ def similarity(first: np.ndarray, second: np.ndarray) -> float:
     return float(np.count_nonzero(a & b) / union)
 
 
+def congruence(first: np.ndarray, second: np.ndarray, tolerance: int = 3) -> float:
+    """Shape agreement that tolerates a pixel or two of registration error.
+
+    Plain overlap collapses for thin outlines: two rings traced from the same
+    drawing score 0.83, because shifting a ring by a pixel moves nearly all of
+    its ink. Allowing a small slack, and taking the worse of the two coverages
+    so that a blob cannot satisfy a ring, holds up for outlines and solids
+    alike.
+    """
+    a, b = _normalise(first), _normalise(second)
+    if a is None or b is None:
+        return 0.0
+    solid_a = (a * np.uint8(255)).astype(np.uint8)
+    solid_b = (b * np.uint8(255)).astype(np.uint8)
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (2 * tolerance + 1, 2 * tolerance + 1)
+    )
+    near_a = cv2.dilate(solid_a, kernel)
+    near_b = cv2.dilate(solid_b, kernel)
+
+    count_a = max(1, int(np.count_nonzero(solid_a)))
+    count_b = max(1, int(np.count_nonzero(solid_b)))
+    recall = np.count_nonzero(cv2.bitwise_and(solid_a, near_b)) / count_a
+    precision = np.count_nonzero(cv2.bitwise_and(solid_b, near_a)) / count_b
+    return float(min(recall, precision))
+
+
 def cluster(slots: list[Slot], *, threshold: float = 0.72, aspect_tolerance: float = 0.3) -> list[list[int]]:
     """Complete-link grouping, so every member resembles every other member.
 

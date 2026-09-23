@@ -40,12 +40,15 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    out in the plot, the legend's sample is claimed by resemblance, since that one
    never stands alone.
 6. **Legends** — a closed box whose ink is about what tracing its boundary once
-   would use, and whose hull fills its bounding box, is a frame. The samples
-   inside it are paired with the name to the right of each, and the frame,
-   samples and names are written as one `<g class="legend">`, with each name
-   carrying the series it names. A sample inside a legend is taken out of the
-   series it stands for: it is not a data point, and leaving it in would put a
-   reading at the legend's own coordinates.
+   would use, and whose hull fills its bounding box, is a frame. Without a box —
+   which is the common case — a legend is found by the shape of its rows
+   instead: samples sharing a column, each with its name immediately to the
+   right, the names starting at a common margin. Sitting outside the plot is not
+   used as a cue, because legends are as often placed inside the axes. Either
+   way the frame, samples and names are written as one `<g class="legend">`,
+   with each name carrying the series it names. A sample in a legend is taken
+   out of the series it stands for: it is not a data point, and leaving it in
+   would put a reading at the legend's own coordinates.
 7. **Curves** — axes, arrowheads and ticks are erased, and what remains is
    traced along its centreline, per column where the stroke is a function of x
    and along the medial axis otherwise. Strokes that an erased axis cut apart
@@ -89,6 +92,10 @@ areas and markers are found — or whether looking for them misfires.
 | marker series | both found, named circle and rectangle, filled and hollow |
 | axes | one arrowhead each, on the correct end |
 | legend | found as one group, one of two rows tied to its series |
+
+`examples/series/figure.png` is the same idea for a legend with no box around
+it: both rows found and tied to their series, and neither sample counted as
+data.
 
 The same detectors find **no** areas and **no** marker series in the
 interference figure, which is the property that matters: a test for a feature a
@@ -236,7 +243,6 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 
 ## Still missing
 
-- Legends without a drawn frame, which are common; only a framed one is found.
 - A legend sample drawn hard against its label. It becomes one component with
   the label, and splitting at the emptiest column does not help, because a
   hollow sample's own interior is emptier than the gap beside it. The row is

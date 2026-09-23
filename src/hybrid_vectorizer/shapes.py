@@ -449,28 +449,33 @@ def claim_similar(
 ) -> dict[int, Component]:
     """Find another copy of a marker whose shape is already known.
 
-    The test has to be strict. A filled disc, once both shapes are scaled to a
-    common box, overlaps most small blobs heavily: letter fragments in a legend
-    score up to 0.86 against one, and a full stop scores 0.86. Only a near
-    identity, at near the same size, is evidence of another copy.
+    Two things are needed, and neither alone is enough. The mark must be within
+    a few per cent of the same size, because a filled disc scaled to a common
+    box resembles most small blobs and a full stop scores 0.86 against one. And
+    the shapes must agree with a pixel or two of slack, because plain overlap
+    collapses for thin outlines: two rings from the same drawing score only 0.83.
 
     Splitting a mark that a sample has run into is not attempted. A hollow
     sample has its own thin interior, so the emptiest column falls inside the
     sample rather than between it and its neighbour.
     """
-    from .consensus import similarity
+    from .consensus import congruence
 
     taken: dict[int, Component] = {}
+    low, high = 1.0 - size_tolerance, 1.0 + size_tolerance
     for series in sets:
         reference = max(series.components, key=lambda item: item.area)
-        span = max(reference.width, reference.height)
         for component in components:
             if id(component) in taken or component in series.components:
                 continue
-            ratio = max(component.width, component.height) / max(1.0, span)
-            if not (1.0 - size_tolerance <= ratio <= 1.0 + size_tolerance):
+            # Both sides must agree. Comparing only the longer one lets a 20x3
+            # sliver pass for a 19x19 disc, and the shapes are compared in a
+            # square box, where any solid mark becomes a solid square.
+            wide = component.width / max(1.0, reference.width)
+            tall = component.height / max(1.0, reference.height)
+            if not (low <= wide <= high and low <= tall <= high):
                 continue
-            if similarity(component.mask, reference.mask) < threshold:
+            if congruence(component.mask, reference.mask) < threshold:
                 continue
             series.components.append(component)
             series.positions.append(

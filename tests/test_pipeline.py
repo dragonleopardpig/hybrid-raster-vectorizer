@@ -488,6 +488,68 @@ class LegendAssemblyTest(unittest.TestCase):
         self.assertEqual(assemble([], [series], [self._block(160, 118, 60, 24)]), [])
 
 
+class UnframedLegendTest(unittest.TestCase):
+    def _block(self, x, y, width, height):
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.textlayout import Block
+
+        return Block(components=[Component(
+            label=1, x=x, y=y, width=width, height=height, area=width * height,
+            centroid=(x + width / 2.0, y + height / 2.0),
+            mask=np.full((height, width), 255, np.uint8),
+        )])
+
+    def _series(self, positions):
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.shapes import MarkerSet
+
+        components = [
+            Component(label=1, x=int(x) - 8, y=int(y) - 8, width=16, height=16, area=256,
+                      centroid=(x, y), mask=np.full((16, 16), 255, np.uint8))
+            for x, y in positions
+        ]
+        return MarkerSet(shape="circle", filled=True, size=16.0,
+                         positions=list(positions), components=components)
+
+    def test_rows_sharing_a_column_are_a_legend(self):
+        from hybrid_vectorizer.legend import find_unframed
+
+        first = self._series([(600.0, 100.0), (120.0, 400.0)])
+        second = self._series([(600.0, 150.0), (300.0, 420.0)])
+        blocks = [self._block(620, 90, 70, 22), self._block(620, 140, 60, 22)]
+        legends = find_unframed([first, second], blocks, 20.0)
+        self.assertEqual(len(legends), 1)
+        self.assertFalse(legends[0].framed)
+        self.assertEqual(len(legends[0].entries), 2)
+        self.assertEqual(first.positions, [(120.0, 400.0)])
+        self.assertEqual(second.positions, [(300.0, 420.0)])
+
+    def test_one_labelled_point_is_not_a_legend(self):
+        from hybrid_vectorizer.legend import find_unframed
+
+        series = self._series([(600.0, 100.0), (120.0, 400.0)])
+        legends = find_unframed([series], [self._block(620, 90, 70, 22)], 20.0)
+        self.assertEqual(legends, [])
+        self.assertEqual(len(series.positions), 2, "a lone annotation is left alone")
+
+    def test_names_must_start_at_a_common_margin(self):
+        from hybrid_vectorizer.legend import find_unframed
+
+        first = self._series([(600.0, 100.0)])
+        second = self._series([(600.0, 150.0)])
+        # the second name is indented far past the first, so these are not rows
+        blocks = [self._block(620, 90, 70, 22), self._block(700, 140, 60, 22)]
+        self.assertEqual(find_unframed([first, second], blocks, 20.0), [])
+
+    def test_a_label_on_the_wrong_side_is_not_paired(self):
+        from hybrid_vectorizer.legend import find_unframed
+
+        first = self._series([(600.0, 100.0)])
+        second = self._series([(600.0, 150.0)])
+        blocks = [self._block(480, 90, 70, 22), self._block(480, 140, 60, 22)]
+        self.assertEqual(find_unframed([first, second], blocks, 20.0), [])
+
+
 class ArrowTest(unittest.TestCase):
     def test_a_long_thin_spike_is_not_an_arrowhead(self):
         """A cut-away filled area leaves a taper far longer than it is wide."""
@@ -569,6 +631,37 @@ class MixedFigureTest(unittest.TestCase):
     def test_a_filled_area_is_not_read_as_a_thick_rule(self):
         for rule in self.analysis.rules:
             self.assertLess(rule.thickness, 20.0)
+
+
+@unittest.skipUnless((ROOT / "examples" / "series" / "figure.png").exists(), "series example missing")
+class SeriesFigureTest(unittest.TestCase):
+    """A legend with no box around it, found by the shape of its rows."""
+
+    @classmethod
+    def setUpClass(cls):
+        from hybrid_vectorizer.convert import Options, analyse
+
+        cls.analysis = analyse(ROOT / "examples" / "series" / "figure.png", Options())
+
+    def test_an_unframed_legend_is_found(self):
+        self.assertEqual(len(self.analysis.frames), 0)
+        self.assertEqual(len(self.analysis.legends), 1)
+        legend = self.analysis.legends[0]
+        self.assertFalse(legend.framed)
+        self.assertEqual(len(legend.entries), 2)
+
+    def test_every_row_is_tied_to_a_series(self):
+        legend = self.analysis.legends[0]
+        self.assertTrue(all(entry.series is not None for entry in legend.entries))
+        self.assertEqual(len({entry.series for entry in legend.entries}), 2)
+
+    def test_the_samples_are_not_counted_as_data(self):
+        legend = self.analysis.legends[0]
+        x, y, width, height = legend.bounds
+        for series in self.analysis.marker_sets:
+            for px, py in series.positions:
+                inside = x <= px <= x + width and y <= py <= y + height
+                self.assertFalse(inside, f"{series.shape} at ({px:.0f},{py:.0f}) is a sample")
 
 
 class NoRegressionTest(unittest.TestCase):
