@@ -469,6 +469,54 @@ class ShapeTest(unittest.TestCase):
         self.assertFalse(has_border(self._component(bare), 2.0))
 
 
+class WordVersusLineTest(unittest.TestCase):
+    """In heavy type a whole word arrives as one component, wide enough to pass
+    for a curve, and is then traced as a squiggle and never read."""
+
+    def _component(self, mask):
+        from hybrid_vectorizer.components import Component
+
+        ys, xs = np.nonzero(mask)
+        return Component(
+            label=1, x=0, y=0, width=mask.shape[1], height=mask.shape[0],
+            area=int(np.count_nonzero(mask)), centroid=(0.0, 0.0), mask=mask,
+        )
+
+    def test_a_drawn_line_has_two_ends_and_no_branches(self):
+        from hybrid_vectorizer.tracing import skeleton_nodes
+
+        mask = np.zeros((200, 400), np.uint8)
+        xs = np.arange(20, 380)
+        for x in xs:
+            cv2.circle(mask, (int(x), int(100 + 60 * np.sin(x / 60.0))), 3, 255, -1)
+        ends, junctions = skeleton_nodes(mask)
+        self.assertEqual(ends, 2)
+        self.assertEqual(junctions, 0)
+
+    def test_a_word_has_many_ends_and_branches(self):
+        from hybrid_vectorizer.tracing import skeleton_nodes
+
+        mask = np.zeros((60, 320), np.uint8)
+        cv2.putText(mask, "Imaginary", (6, 44), cv2.FONT_HERSHEY_SIMPLEX, 1.3, 255, 5)
+        ends, junctions = skeleton_nodes(mask)
+        self.assertGreaterEqual(ends + junctions, 10)
+
+    def test_a_touching_word_is_not_taken_for_a_curve(self):
+        from hybrid_vectorizer.tracing import looks_like_text
+
+        mask = np.zeros((44, 300), np.uint8)
+        cv2.putText(mask, "Imaginary", (6, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.1, 255, 6)
+        self.assertTrue(looks_like_text(self._component(mask), 26.0))
+
+    def test_a_tall_curve_is_still_a_curve(self):
+        from hybrid_vectorizer.tracing import looks_like_text
+
+        mask = np.zeros((300, 400), np.uint8)
+        for x in range(20, 380):
+            cv2.circle(mask, (x, int(150 + 120 * np.sin(x / 50.0))), 3, 255, -1)
+        self.assertFalse(looks_like_text(self._component(mask), 26.0))
+
+
 class DashedLineTest(unittest.TestCase):
     def _marks(self, image):
         from hybrid_vectorizer.components import extract
@@ -827,7 +875,7 @@ class NoRegressionTest(unittest.TestCase):
         self.assertEqual(analysis.legends, [])
         self.assertEqual(analysis.dashed, [], "tick-label bars are not a broken line")
         self.assertTrue(all(b.orientation == "horizontal" for b in analysis.blocks))
-        self.assertEqual(len(analysis.traces), 1)
+        self.assertEqual(len(analysis.traces), 1, "the curve must stay a curve")
         self.assertEqual(len(analysis.blocks), 11)
 
 
@@ -845,6 +893,14 @@ class ScannedFigureTest(unittest.TestCase):
         self.assertEqual(len(self.analysis.dashed), 2)
         lengths = sorted(line.length for line in self.analysis.dashed)
         self.assertGreater(lengths[0], 250)
+
+    def test_words_in_heavy_type_are_read_not_traced(self):
+        boxes = {(b.x, b.y, b.width, b.height) for b in self.analysis.blocks}
+        self.assertIn((66, 34, 218, 36), boxes, "'Imaginary' must reach the text stage")
+        self.assertIn((644, 500, 78, 29), boxes, "'Real' must reach the text stage")
+
+    def test_only_the_drawn_vector_is_traced(self):
+        self.assertEqual(len(self.analysis.traces), 1)
 
     def test_the_label_up_the_side_is_read_as_one_line(self):
         vertical = [b for b in self.analysis.blocks if b.orientation == "vertical"]

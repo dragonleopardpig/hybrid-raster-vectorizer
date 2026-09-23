@@ -78,6 +78,38 @@ def is_graphic(component: Component, text_height: float, stroke_width: float) ->
     )
 
 
+_NODE_KERNEL = np.ones((3, 3), np.float32)
+
+
+def skeleton_nodes(mask: np.ndarray) -> tuple[int, int]:
+    """Count where the medial axis ends and where it branches."""
+    spine = skeletonize(mask > 0).astype(np.float32)
+    if not spine.any():
+        return 0, 0
+    counted = cv2.filter2D(spine, cv2.CV_32F, _NODE_KERNEL, borderType=cv2.BORDER_CONSTANT)
+    neighbours = np.rint(counted - spine).astype(np.int32)
+    live = spine > 0
+    ends = int(np.count_nonzero(live & (neighbours == 1)))
+    junctions = int(np.count_nonzero(live & (neighbours >= 3)))
+    return ends, junctions
+
+
+def looks_like_text(
+    component: Component, text_height: float, *, minimum_nodes: int = 6, tallest: float = 2.5
+) -> bool:
+    """Distinguish a word whose letters touch from a line that was drawn.
+
+    In heavy type a whole word can arrive as one component, wide enough to pass
+    for a curve, and then it is traced as a squiggle and never read at all. A
+    drawn line has two ends and no branches however long it is; a word of nine
+    letters has dozens of both.
+    """
+    if component.height > tallest * text_height:
+        return False
+    ends, junctions = skeleton_nodes(component.mask)
+    return ends + junctions >= minimum_nodes
+
+
 def _runs(column: np.ndarray) -> list[np.ndarray]:
     indices = np.flatnonzero(column)
     if indices.size == 0:
@@ -262,7 +294,8 @@ def partition(
                 )
             )
             continue
-        if is_graphic(component, text_height, page.stroke_width):
+        graphic = is_graphic(component, text_height, page.stroke_width)
+        if graphic and not looks_like_text(component, text_height):
             trace = trace_component(component)
             if trace is not None:
                 traces.append(trace)

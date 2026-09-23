@@ -65,7 +65,10 @@ and every decision it makes is recorded in a JSON report beside the SVG.
 8. **Curves** — axes, arrowheads and ticks are erased, and what remains is
    traced along its centreline, per column where the stroke is a function of x
    and along the medial axis otherwise. Strokes that an erased axis cut apart
-   are rejoined.
+   are rejoined. Before any of that, a component wide enough to pass for a
+   curve is checked for branching: in heavy type a whole word arrives as one
+   component, and a drawn line has two ends and no branches however long it is,
+   while a word of nine letters has dozens of both.
 9. **Fitting** — the trace is matched against straight lines, polynomials and
    sinusoids (period by spectrum, then a bracketed minimisation), and fitted
    with cubic Béziers by Schneider's algorithm to a tolerance set as a fraction
@@ -273,7 +276,7 @@ should be.
 
 | figure | paper spread | blocks | note |
 |---|---|---|---|
-| `complex.png` | 8 | 8 | clean; ink agreement 0.86 recall, 0.90 precision; broken lines and the turned label both read |
+| `complex.png` | 8 | 8 | clean; ink agreement 0.89 recall, 0.87 precision; every label but one read correctly |
 | `waves1.png` | 0 | 44 | clean |
 | `thicklens_cascade.png` | 42 | 38 | flattened |
 | `refraction.png` | 56 | 53 | flattened; grey stipple read as filled areas |
@@ -286,12 +289,20 @@ the point of the 25-level gate.
 
 Shading as dark as the ink is not separable this way and is not attempted.
 
-`complex.png` has gone from 0.787 recall to 0.857: finding its broken lines was
-worth 0.046, reading the label up the side of its axis another 0.007, and
-keeping what a LaTeX style command wraps another 0.017 — the last of those
-because `\boldsymbol{x}` was being rendered as the word "boldsymbol". Its
-geometry, its turned label and `x = A cos φ` now come out right. "Imaginary" and
-"Real", set in heavy bold serif, still do not.
+`complex.png` has gone from 0.787 recall to 0.893:
+
+| change | recall |
+|---|---|
+| broken lines read as lines | 0.787 → 0.833 |
+| the label up the side of the axis | → 0.840 |
+| LaTeX style commands keep what they wrap | → 0.857 |
+| words in heavy type read instead of traced | → 0.893 |
+
+`Imaginary`, `Real`, `y = A sin φ`, `x = A cos φ` and `Fig. 1-6` all come out
+right, as do both axes, both broken lines and the vector. `A = |z|` does not.
+Precision fell slightly, from 0.899 to 0.870, because those words are now set in
+an installed face rather than traced as the shapes they actually are — which is
+the trade the whole project makes.
 
 ## Still missing
 
