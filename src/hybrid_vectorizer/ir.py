@@ -26,6 +26,10 @@ class Element:
     provenance: str = ""
     identifier: str | None = None
 
+    def defs(self) -> list[str]:
+        """Anything this element needs declared once, such as a pattern."""
+        return []
+
     def attributes(self) -> str:
         parts = []
         if self.identifier:
@@ -107,6 +111,113 @@ class Curve(Element):
             f'{indent}<path class="curve" {self.attributes()}{model} '
             f'stroke-width="{_number(self.stroke_width)}" d="{self.path}"/>'
         ]
+
+
+@dataclass
+class Area(Element):
+    """A filled or ruled region, drawn as a shape rather than as its outline."""
+
+    path: str = ""
+    shape: str = "freeform"
+    parameters: dict = field(default_factory=dict)
+    hatch_angle: float | None = None
+    hatch_spacing: float | None = None
+    hatch_width: float = 1.0
+    bordered: bool = False
+    border_width: float = 1.0
+
+    @property
+    def pattern(self) -> str | None:
+        return f"hatch-{self.identifier}" if self.hatch_spacing else None
+
+    def defs(self) -> list[str]:
+        if not self.pattern:
+            return []
+        spacing = _number(self.hatch_spacing or 1.0)
+        return [
+            f'    <pattern id="{_attribute(self.pattern)}" patternUnits="userSpaceOnUse"',
+            f'             width="{spacing}" height="{spacing}"',
+            f'             patternTransform="rotate({_number(self.hatch_angle or 0.0)})">',
+            f'      <line x1="0" y1="0" x2="{spacing}" y2="0" stroke="currentColor"',
+            f'            stroke-width="{_number(self.hatch_width)}"/>',
+            "    </pattern>",
+        ]
+
+    def to_svg(self, indent: str) -> list[str]:
+        fill = f'url(#{self.pattern})' if self.pattern else "currentColor"
+        edge = (
+            f' stroke="currentColor" stroke-width="{_number(self.border_width)}"'
+            if self.bordered else ""
+        )
+        common = f'class="area {self.shape}" {self.attributes()} fill="{fill}"{edge}'
+        if self.shape == "rectangle" and self.parameters:
+            p = self.parameters
+            return [
+                f'{indent}<rect {common} x="{_number(p["x"])}" y="{_number(p["y"])}" '
+                f'width="{_number(p["width"])}" height="{_number(p["height"])}"/>'
+            ]
+        if self.shape == "circle" and self.parameters:
+            p = self.parameters
+            return [
+                f'{indent}<circle {common} cx="{_number(p["cx"])}" cy="{_number(p["cy"])}" '
+                f'r="{_number(p["r"])}"/>'
+            ]
+        return [f'{indent}<path {common} fill-rule="evenodd" d="{self.path}"/>']
+
+
+@dataclass
+class MarkerField(Element):
+    """One data series, drawn as repeats of a single shape."""
+
+    shape: str = "circle"
+    size: float = 4.0
+    filled: bool = True
+    stroke_width: float = 1.0
+    positions: list[tuple[float, float]] = field(default_factory=list)
+    parameters: dict = field(default_factory=dict)
+
+    @property
+    def symbol(self) -> str:
+        return f"marker-{self.identifier}"
+
+    def _primitive(self) -> str:
+        paint = (
+            'fill="currentColor"'
+            if self.filled
+            else f'fill="none" stroke="currentColor" stroke-width="{_number(self.stroke_width)}"'
+        )
+        half = self.size / 2.0
+        if self.shape == "rectangle":
+            return (
+                f'<rect x="{_number(-half)}" y="{_number(-half)}" '
+                f'width="{_number(self.size)}" height="{_number(self.size)}" {paint}/>'
+            )
+        if self.shape == "triangle":
+            return (
+                f'<path d="M0 {_number(-half)} L{_number(half)} {_number(half)} '
+                f'L{_number(-half)} {_number(half)} Z" {paint}/>'
+            )
+        radius = float(self.parameters.get("r", half))
+        return f'<circle cx="0" cy="0" r="{_number(radius)}" {paint}/>'
+
+    def defs(self) -> list[str]:
+        return [
+            f'    <g id="{_attribute(self.symbol)}">',
+            f"      {self._primitive()}",
+            "    </g>",
+        ]
+
+    def to_svg(self, indent: str) -> list[str]:
+        lines = [
+            f'{indent}<g class="markers" {self.attributes()} data-count="{len(self.positions)}">'
+        ]
+        for x, y in self.positions:
+            lines.append(
+                f'{indent}  <use href="#{_attribute(self.symbol)}" '
+                f'xlink:href="#{_attribute(self.symbol)}" x="{_number(x)}" y="{_number(y)}"/>'
+            )
+        lines.append(f"{indent}</g>")
+        return lines
 
 
 @dataclass
@@ -194,6 +305,10 @@ class Document:
             '            markerUnits="userSpaceOnUse" orient="auto">',
             '      <path d="M12 0 L0 6 L12 12 Z" fill="currentColor"/>',
             "    </marker>",
+        ]
+        for element in self.geometry + self.labels:
+            head.extend(element.defs())
+        head += [
             "  </defs>",
             "  <style>",
             "    /* Every mark paints with currentColor, so an inline SVG simply takes",
@@ -212,6 +327,8 @@ class Document:
             f" font-weight: {weight}; }}",
             "    .italic { font-style: italic; }",
             "    .upright { font-style: normal; }",
+            "    .area { stroke: none; }",
+            "    .markers { color: inherit; }",
             "  </style>",
         ]
         if self.background:

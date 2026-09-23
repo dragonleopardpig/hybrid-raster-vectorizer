@@ -27,27 +27,39 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    axis and an arrowhead both flare like a tick, so both are excluded by
    position. Surviving marks are fitted to a lattice and snapped to it when the
    residual is small.
-4. **Curves** — axes, arrowheads and ticks are erased, and what remains is
+4. **Areas** — filled and ruled regions are claimed before anything else,
+   because a long run through a filled shape is indistinguishable from an axis
+   and the parallel strokes of ruling are indistinguishable from a dozen curves.
+   Solidity is measured by distance from the background rather than by filling
+   the outline, which for anything thin returns the shape again. Ruling reports
+   its angle and spacing and becomes an SVG `<pattern>`; a drawn frame around it
+   is kept, and one that is only where the ruling stops is not invented.
+5. **Marker series** — congruent marks that stand alone are grouped into a
+   series and named (circle, rectangle, triangle), then emitted once as a
+   `<symbol>` and placed with `<use>`. Once the shape is known from the copies
+   out in the plot, the legend's sample is claimed by resemblance, since that one
+   never stands alone.
+6. **Curves** — axes, arrowheads and ticks are erased, and what remains is
    traced along its centreline, per column where the stroke is a function of x
    and along the medial axis otherwise. Strokes that an erased axis cut apart
    are rejoined.
-5. **Fitting** — the trace is matched against straight lines, polynomials and
+7. **Fitting** — the trace is matched against straight lines, polynomials and
    sinusoids (period by spectrum, then a bracketed minimisation), and fitted
    with cubic Béziers by Schneider's algorithm to a tolerance set as a fraction
    of the pen width. The analytic reading is recorded on the path either way;
    `--idealise` redraws from it instead of from the ink.
-6. **Text** — leftover ink is grouped into labels. Fraction bars are found
+8. **Text** — leftover ink is grouped into labels. Fraction bars are found
    structurally, by being the only rule with ink both above and below, which is
    what separates them from an equals sign or a leading minus. Each bar claims
    its own numerator and denominator, so adjacent tick labels cannot run
    together.
-7. **Reading** — labels are routed to Tesseract or, through a persistent worker,
+9. **Reading** — labels are routed to Tesseract or, through a persistent worker,
    to PP-FormulaNet. A confident prose reading wins; anything else is treated as
    mathematics.
-8. **Typesetting** — the LaTeX is parsed and laid out using the real advance
+10. **Typesetting** — the LaTeX is parsed and laid out using the real advance
    widths of the matched font, then written as positioned SVG text. Repeated
    structures on one row are set in a single size.
-9. **Verification** — the finished SVG is rasterised with resvg and compared
+11. **Verification** — the finished SVG is rasterised with resvg and compared
    against the original ink, and the agreement is reported.
 
 The page is **transparent** and every mark paints with `currentColor`, so an
@@ -57,6 +69,22 @@ file defaults to dark ink and switches to light ink under
 `--background COLOR` paints a solid page instead.
 
 ## What it gets right, and what it does not
+
+`examples/mixed/figure.png` is drawn by `tools/make_mixed_example.py` with known
+contents, because the interference scan is all strokes and cannot show whether
+areas and markers are found — or whether looking for them misfires.
+
+| | result |
+|---|---|
+| ink agreement | recall 0.973, precision 0.988 within 3px |
+| filled area | found, boundary fitted |
+| ruled area | found at 45° and 9.9px, as a `<pattern>`, frame kept |
+| marker series | both found, named circle and rectangle, filled and hollow |
+| axes | one arrowhead each, on the correct end |
+
+The same detectors find **no** areas and **no** marker series in the
+interference figure, which is the property that matters: a test for a feature a
+drawing does not have must come back empty. A test pins that.
 
 On `examples/interference/raster.png`, a scan of a mid-century textbook figure:
 
@@ -195,7 +223,11 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 
 ## Still missing
 
-- Filled regions, hatching, legends, data markers and embedded images.
+- Legends as a unit. The frame is traced and the entries read, but they are
+  not grouped into one object, and a sample mark touching its label becomes one
+  component with it, which no amount of proximity reasoning can undo.
+- Embedded images, and areas filled with anything other than solid ink or
+  evenly spaced ruling.
 - Multi-line prose blocks and rotated text.
 - Occlusion recovery beyond rejoining strokes an axis cut apart.
 - Curve families other than lines, polynomials and sinusoids.
@@ -208,4 +240,4 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
   recogniser that emits per-character alternatives with probabilities, or
   training on the document's own letterforms; guessing harder will not.
 - Segmenting letters that genuinely overlap, which a straight vertical cut
-  cannot do.
+  cannot do. The same limit costs the legend sample above.

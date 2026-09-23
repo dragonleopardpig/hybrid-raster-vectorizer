@@ -315,6 +315,160 @@ class AlignmentTest(unittest.TestCase):
         self.assertEqual(pairs, [])
 
 
+class ShapeTest(unittest.TestCase):
+    def _component(self, mask):
+        from hybrid_vectorizer.components import Component
+
+        return Component(
+            label=1, x=0, y=0, width=mask.shape[1], height=mask.shape[0],
+            area=int(np.count_nonzero(mask)), centroid=(0.0, 0.0), mask=mask,
+        )
+
+    def test_a_stroke_has_no_depth_but_a_blob_does(self):
+        from hybrid_vectorizer.shapes import deep_fraction
+
+        stroke = np.zeros((80, 80), np.uint8)
+        cv2.line(stroke, (5, 40), (75, 40), 255, 4)
+        blob = np.zeros((80, 80), np.uint8)
+        cv2.circle(blob, (40, 40), 30, 255, -1)
+        self.assertLess(deep_fraction(stroke, 4.0), 0.05)
+        self.assertGreater(deep_fraction(blob, 4.0), 0.5)
+
+    def test_a_filled_area_is_separated_from_the_stroke_it_touches(self):
+        from hybrid_vectorizer.shapes import split_solids
+
+        ink = np.zeros((160, 200), np.uint8)
+        cv2.circle(ink, (80, 70), 40, 255, -1)
+        cv2.line(ink, (0, 140), (199, 140), 255, 4)
+        cv2.line(ink, (80, 70), (80, 140), 255, 4)
+        solid, rest = split_solids(ink, 4.0)
+        self.assertGreater(np.count_nonzero(solid), 3000)
+        self.assertGreater(np.count_nonzero(rest[138:143, :]), 500, "the rule must survive")
+        self.assertLess(np.count_nonzero(solid[138:143, :]), 60)
+
+    def test_ruling_reports_its_angle_and_spacing(self):
+        from hybrid_vectorizer.shapes import detect_hatch
+
+        mask = np.zeros((220, 260), np.uint8)
+        for offset in range(-260, 260, 16):
+            cv2.line(mask, (offset, 0), (offset + 220, 220), 255, 2)
+        cv2.rectangle(mask, (2, 2), (257, 217), 255, 2)
+        hatch = detect_hatch(self._component(mask), 2.0)
+        self.assertIsNotNone(hatch)
+        self.assertAlmostEqual(hatch.angle, 45.0, delta=4.0)
+        self.assertAlmostEqual(hatch.spacing, 16.0 / (2 ** 0.5), delta=2.0)
+
+    def test_a_box_with_one_line_in_it_is_not_ruling(self):
+        from hybrid_vectorizer.shapes import detect_hatch
+
+        mask = np.zeros((120, 260), np.uint8)
+        cv2.rectangle(mask, (2, 2), (257, 117), 255, 2)
+        cv2.line(mask, (20, 60), (240, 60), 255, 3)
+        self.assertIsNone(detect_hatch(self._component(mask), 2.0))
+
+    def test_boundaries_are_named(self):
+        from hybrid_vectorizer.shapes import outline
+
+        circle = np.zeros((60, 60), np.uint8)
+        cv2.circle(circle, (30, 30), 22, 255, -1)
+        square = np.zeros((60, 60), np.uint8)
+        cv2.rectangle(square, (8, 8), (50, 50), 255, 2)
+        self.assertEqual(outline(self._component(circle), 3.0).kind, "circle")
+        self.assertEqual(outline(self._component(square), 2.0).kind, "rectangle")
+
+    def test_a_drawn_frame_is_told_from_where_ruling_stops(self):
+        from hybrid_vectorizer.shapes import has_border
+
+        framed = np.zeros((160, 200), np.uint8)
+        cv2.rectangle(framed, (4, 4), (195, 155), 255, 2)
+        bare = np.zeros((160, 200), np.uint8)
+        for offset in range(-160, 200, 16):
+            cv2.line(bare, (offset, 0), (offset + 160, 159), 255, 2)
+        self.assertTrue(has_border(self._component(framed), 2.0))
+        self.assertFalse(has_border(self._component(bare), 2.0))
+
+
+class ArrowTest(unittest.TestCase):
+    def test_a_long_thin_spike_is_not_an_arrowhead(self):
+        """A cut-away filled area leaves a taper far longer than it is wide."""
+        from hybrid_vectorizer.primitives import _find_arrow
+
+        spike = np.full(160, 4, dtype=np.int32)
+        spike[-96:] = np.linspace(20, 4, 96).astype(np.int32)
+        self.assertIsNone(_find_arrow(spike, 4.0, at_end=True, search=140))
+
+    def test_a_short_very_wide_flare_is_not_an_arrowhead(self):
+        """A crossing rule flares far wider than it is long."""
+        from hybrid_vectorizer.primitives import _find_arrow
+
+        flare = np.full(160, 4, dtype=np.int32)
+        flare[-5:] = 77
+        self.assertIsNone(_find_arrow(flare, 4.0, at_end=True, search=140))
+
+    def test_a_proper_head_is_accepted(self):
+        from hybrid_vectorizer.primitives import _find_arrow
+
+        profile = np.full(160, 4, dtype=np.int32)
+        profile[-24:] = np.linspace(26, 4, 24).astype(np.int32)
+        arrow = _find_arrow(profile, 4.0, at_end=True, search=140)
+        self.assertIsNotNone(arrow)
+        self.assertGreater(arrow.width, 8)
+
+
+@unittest.skipUnless((ROOT / "examples" / "mixed" / "figure.png").exists(), "mixed example missing")
+class MixedFigureTest(unittest.TestCase):
+    """Areas, ruling and marker series, on a figure whose contents are known."""
+
+    @classmethod
+    def setUpClass(cls):
+        from hybrid_vectorizer.convert import Options, analyse
+
+        cls.analysis = analyse(ROOT / "examples" / "mixed" / "figure.png", Options())
+
+    def test_one_filled_area_and_one_ruled_area(self):
+        kinds = sorted(region.kind for region in self.analysis.regions)
+        self.assertEqual(kinds, ["hatched", "solid"])
+
+    def test_the_ruling_is_measured(self):
+        hatched = next(r for r in self.analysis.regions if r.kind == "hatched")
+        self.assertAlmostEqual(hatched.hatch.angle, 45.0, delta=5.0)
+        self.assertAlmostEqual(hatched.hatch.spacing, 14.0 / (2 ** 0.5), delta=2.0)
+        self.assertEqual(hatched.outline.kind, "rectangle")
+        self.assertTrue(hatched.bordered)
+
+    def test_two_marker_series_with_the_right_shapes(self):
+        shapes = sorted(series.shape for series in self.analysis.marker_sets)
+        self.assertEqual(shapes, ["circle", "rectangle"])
+        for series in self.analysis.marker_sets:
+            self.assertGreaterEqual(len(series.positions), 4)
+        filled = {series.shape: series.filled for series in self.analysis.marker_sets}
+        self.assertTrue(filled["circle"])
+        self.assertFalse(filled["rectangle"])
+
+    def test_each_axis_keeps_exactly_one_arrowhead(self):
+        self.assertEqual(len(self.analysis.rules), 2)
+        for rule in self.analysis.rules:
+            self.assertEqual(len(rule.arrows), 1, f"{rule.orientation} axis")
+
+    def test_a_filled_area_is_not_read_as_a_thick_rule(self):
+        for rule in self.analysis.rules:
+            self.assertLess(rule.thickness, 20.0)
+
+
+class NoRegressionTest(unittest.TestCase):
+    """The stroke-only example must gain no areas and no marker series."""
+
+    @unittest.skipUnless(EXAMPLE.exists(), "example figure is not present")
+    def test_the_interference_figure_stays_all_strokes(self):
+        from hybrid_vectorizer.convert import Options, analyse
+
+        analysis = analyse(EXAMPLE, Options())
+        self.assertEqual(analysis.regions, [])
+        self.assertEqual(analysis.marker_sets, [])
+        self.assertEqual(len(analysis.traces), 1)
+        self.assertEqual(len(analysis.blocks), 11)
+
+
 class OutputTest(unittest.TestCase):
     def _document(self, **kwargs):
         from hybrid_vectorizer import ir

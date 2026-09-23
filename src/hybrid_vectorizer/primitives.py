@@ -88,6 +88,7 @@ def _find_arrow(
     at_end: bool,
     search: int,
     minimum_flare: float = 2.2,
+    proportions: tuple[float, float] = (0.4, 3.0),
 ) -> Arrow | None:
     """Walk inwards from a tip while the perpendicular thickness keeps growing."""
     if profile.size == 0:
@@ -120,6 +121,13 @@ def _find_arrow(
         index += 1
 
     if peak < minimum_flare * max(1.0, body_thickness) or length < 3:
+        return None
+
+    # An arrowhead is about as long as it is wide. A long thin spike is where a
+    # filled area was cut away, and a short very wide one is a crossing rule;
+    # neither tapers to a point, and neither is an arrowhead.
+    slimmest, stoutest = proportions
+    if not (slimmest <= length / max(1.0, peak) <= stoutest):
         return None
     return Arrow(at_end=at_end, length=float(length), width=float(peak))
 
@@ -165,9 +173,16 @@ def _rule_from_mask(
     return rule
 
 
-def detect_rules(page: Page, *, minimum_length_fraction: float = 0.22) -> list[Rule]:
+def detect_rules(
+    page: Page,
+    *,
+    ink: np.ndarray | None = None,
+    minimum_length_fraction: float = 0.22,
+    maximum_thickness_factor: float = 3.0,
+) -> list[Rule]:
     rules: list[Rule] = []
-    ink = page.ink
+    ink = page.ink if ink is None else ink
+    thickness_limit = max(6.0, maximum_thickness_factor * page.stroke_width)
 
     for orientation in ("horizontal", "vertical"):
         span = page.width if orientation == "horizontal" else page.height
@@ -181,10 +196,35 @@ def detect_rules(page: Page, *, minimum_length_fraction: float = 0.22) -> list[R
         count, labels, _stats, _centroids = cv2.connectedComponentsWithStats(opened, 8)
         for label in range(1, count):
             rule = _rule_from_mask(labels == label, orientation, ink, span)
-            if rule is not None and rule.length >= run:
-                rules.append(rule)
+            if rule is None or rule.length < run:
+                continue
+            # A long run through a filled shape is not a rule; a rule is thin.
+            if rule.thickness > thickness_limit:
+                continue
+            rules.append(rule)
 
     rules.sort(key=lambda item: item.length, reverse=True)
+
+    # Where another rule crosses near an end, the perpendicular thickness flares
+    # exactly as an arrowhead does. The crossing is known, so the flare is not
+    # evidence of anything.
+    for rule in rules:
+        kept = []
+        for arrow in rule.arrows:
+            tip = rule.end if arrow.at_end else rule.start
+            reach = arrow.length + 2.0 * page.stroke_width
+            crossed = any(
+                other is not rule
+                and other.orientation != rule.orientation
+                and abs(other.position - tip) <= reach
+                and min(other.start, other.end) - reach
+                <= rule.position
+                <= max(other.start, other.end) + reach
+                for other in rules
+            )
+            if not crossed:
+                kept.append(arrow)
+        rule.arrows = kept
     return rules
 
 
@@ -222,11 +262,13 @@ def detect_ticks(
     page: Page,
     rule: Rule,
     *,
+    ink: np.ndarray | None = None,
     others: list[Rule] | None = None,
     reach_factor: float = 7.0,
     snap_tolerance: float = 0.15,
 ) -> TickSet | None:
-    ink = page.ink if rule.orientation == "horizontal" else _transpose(page.ink)
+    source = page.ink if ink is None else ink
+    ink = source if rule.orientation == "horizontal" else _transpose(source)
     height, width = ink.shape
 
     low, high = rule.band(pad=1.0)

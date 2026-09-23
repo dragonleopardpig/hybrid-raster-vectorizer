@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from skimage.morphology import skeletonize
 
-from .components import Component
+from .components import Component, extract
 from .preprocess import Page
 from .primitives import Rule, TickSet
 
@@ -225,6 +225,31 @@ def chain(traces: list[Trace], *, maximum_gap: float) -> list[Trace]:
             )
         )
     return merged + other
+
+
+def partition(
+    page: Page,
+    working: np.ndarray,
+    rules: list[Rule],
+    ticks: list[TickSet],
+    text_height: float,
+) -> tuple[list[Trace], list[Component]]:
+    """Split what is left after the areas into traced strokes and text."""
+    furniture = furniture_mask(page, rules, ticks)
+    residual = cv2.bitwise_and(working, cv2.bitwise_not(furniture))
+
+    traces: list[Trace] = []
+    leftovers: list[Component] = []
+    for component in extract(residual):
+        if is_graphic(component, text_height, page.stroke_width):
+            trace = trace_component(component)
+            if trace is not None:
+                traces.append(trace)
+                continue
+        leftovers.append(component)
+
+    maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
+    return chain(traces, maximum_gap=maximum_gap), leftovers
 
 
 def extract_curves(

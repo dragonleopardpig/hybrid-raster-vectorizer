@@ -40,8 +40,16 @@ from .refine import (
     shape_iou,
     substitute_glyphs,
 )
+from .shapes import (
+    MarkerSet,
+    Region,
+    claim_similar,
+    detect_regions,
+    find_marker_sets,
+    region_path,
+)
 from .textlayout import Block, group_blocks
-from .tracing import Trace, extract_curves
+from .tracing import Trace, partition
 
 
 @dataclass
@@ -71,6 +79,8 @@ class Analysis:
     ticks: list[TickSet]
     traces: list[Trace]
     blocks: list[Block]
+    regions: list = field(default_factory=list)
+    marker_sets: list = field(default_factory=list)
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
     alternatives: dict[int, list[str]] = field(default_factory=dict)
@@ -81,13 +91,38 @@ def analyse(path: Path, options: Options) -> Analysis:
     components = extract(page.ink)
     text_height = median_text_height(components, page.height)
 
-    rules = detect_rules(page)
+    regions, working = detect_regions(page.ink, page.stroke_width)
+    rules = detect_rules(page, ink=working)
     ticks = [
-        tick for tick in (detect_ticks(page, rule, others=rules) for rule in rules) if tick
+        tick
+        for tick in (detect_ticks(page, rule, ink=working, others=rules) for rule in rules)
+        if tick
     ]
-    traces, leftovers = extract_curves(page, rules, ticks, components, text_height)
+    traces, leftovers = partition(page, working, rules, ticks, text_height)
     blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
-    return Analysis(page, components, text_height, rules, ticks, traces, blocks)
+
+    marker_sets, consumed = find_marker_sets(blocks, page.stroke_width)
+    claimed = {
+        id(component)
+        for index, block in enumerate(blocks)
+        if index in consumed
+        for component in block.components
+    }
+    if marker_sets:
+        remaining = [
+            component
+            for index, block in enumerate(blocks)
+            if index not in consumed
+            for component in block.components
+        ]
+        claimed |= claim_similar(marker_sets, remaining)
+        leftovers = [component for component in leftovers if id(component) not in claimed]
+        blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
+
+    return Analysis(
+        page, components, text_height, rules, ticks, traces, blocks,
+        regions=regions, marker_sets=marker_sets,
+    )
 
 
 def read_blocks(analysis: Analysis, options: Options) -> None:
@@ -403,6 +438,27 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
     elements: list[ir.Element] = []
     notes: list[dict] = []
 
+    # Areas go down first so that strokes and marks sit on top of them.
+    tolerance = max(1.0, 0.4 * page.stroke_width)
+    for index, region in enumerate(analysis.regions):
+        shape = region.outline
+        elements.append(
+            ir.Area(
+                kind="area",
+                confidence=0.9 if region.kind == "solid" else 0.8,
+                provenance=region.kind,
+                identifier=f"area-{index}",
+                path=region_path(shape, tolerance),
+                shape=shape.kind if shape.kind in {"rectangle", "circle"} else "freeform",
+                parameters=dict(shape.parameters),
+                hatch_angle=region.hatch.angle if region.hatch else None,
+                hatch_spacing=region.hatch.spacing if region.hatch else None,
+                hatch_width=region.hatch.stroke_width if region.hatch else page.stroke_width,
+                bordered=region.bordered,
+                border_width=page.stroke_width,
+            )
+        )
+
     for index, trace in enumerate(analysis.traces):
         points = trace.points
         model = choose_model(
@@ -455,6 +511,22 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 stroke_width=rule.thickness,
                 arrow_start=any(not arrow.at_end for arrow in rule.arrows),
                 arrow_end=any(arrow.at_end for arrow in rule.arrows),
+            )
+        )
+
+    for index, series in enumerate(analysis.marker_sets):
+        elements.append(
+            ir.MarkerField(
+                kind="markers",
+                confidence=0.9,
+                provenance=f"{len(series.positions)} congruent marks",
+                identifier=f"series-{index}",
+                shape=series.shape,
+                size=series.size,
+                filled=series.filled,
+                stroke_width=page.stroke_width,
+                positions=series.positions,
+                parameters={"r": series.parameters["r"]} if "r" in series.parameters else {},
             )
         )
 
@@ -523,6 +595,29 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
             "ranking": [{"face": name, "score": round(score, 3)} for name, score in ranking],
         },
         "curves": curve_notes,
+        "areas": [
+            {
+                "kind": region.kind,
+                "shape": region.outline.kind,
+                "box": [region.component.x, region.component.y,
+                        region.component.width, region.component.height],
+                "hatch": (
+                    {"angle_degrees": round(region.hatch.angle, 1),
+                     "spacing_px": round(region.hatch.spacing, 2)}
+                    if region.hatch else None
+                ),
+            }
+            for region in analysis.regions
+        ],
+        "marker_series": [
+            {
+                "shape": series.shape,
+                "filled": series.filled,
+                "size_px": round(series.size, 1),
+                "count": len(series.positions),
+            }
+            for series in analysis.marker_sets
+        ],
         "ticks": [
             {
                 "orientation": tick.rule.orientation,

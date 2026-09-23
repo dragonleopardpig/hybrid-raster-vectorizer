@@ -84,6 +84,16 @@ def _run_convert(args: argparse.Namespace) -> None:
             f"  curve {curve['curve']}     {curve['segments']} bezier segments, "
             f"model {curve['analytic_model']} residual {curve['analytic_residual_px']}px"
         )
+    for area in summary.get("areas", []):
+        hatch = area["hatch"]
+        detail = (
+            f"hatched {hatch['angle_degrees']:.0f}deg at {hatch['spacing_px']:.1f}px"
+            if hatch else "filled"
+        )
+        print(f"  area        {area['shape']} {area['box']}, {detail}")
+    for series in summary.get("marker_series", []):
+        fill = "filled" if series["filled"] else "hollow"
+        print(f"  markers     {series['count']} x {fill} {series['shape']}, {series['size_px']:.0f}px")
     for tick in summary["ticks"]:
         print(f"  ticks       {tick['count']} on the {tick['orientation']} axis, spacing {tick['spacing_px']}px")
     for label in summary["labels"]:
