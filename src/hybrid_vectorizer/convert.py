@@ -15,6 +15,7 @@ from . import latex as tex
 from .components import Component, extract, median_text_height
 from .fitting import choose_model, fit_bezier, path_data
 from .fonts import FontFace, list_faces, match_font
+from .legend import Legend, assemble
 from .ocr import (
     FormulaReader,
     Reading,
@@ -81,6 +82,8 @@ class Analysis:
     blocks: list[Block]
     regions: list = field(default_factory=list)
     marker_sets: list = field(default_factory=list)
+    frames: list = field(default_factory=list)
+    legends: list = field(default_factory=list)
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
     alternatives: dict[int, list[str]] = field(default_factory=dict)
@@ -98,7 +101,7 @@ def analyse(path: Path, options: Options) -> Analysis:
         for tick in (detect_ticks(page, rule, ink=working, others=rules) for rule in rules)
         if tick
     ]
-    traces, leftovers = partition(page, working, rules, ticks, text_height)
+    frames, traces, leftovers = partition(page, working, rules, ticks, text_height)
     blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
 
     marker_sets, consumed = find_marker_sets(blocks, page.stroke_width)
@@ -108,20 +111,35 @@ def analyse(path: Path, options: Options) -> Analysis:
         if index in consumed
         for component in block.components
     }
-    if marker_sets:
-        remaining = [
+
+    # Only inside a frame is a mark claimed by resemblance alone. Out in the
+    # open a repeated letter resembles a marker just as well, and claiming one
+    # would take a glyph out of a word.
+    if marker_sets and frames:
+        inside = [
             component
-            for index, block in enumerate(blocks)
-            if index not in consumed
-            for component in block.components
+            for component in leftovers
+            if id(component) not in claimed
+            and any(
+                frame.contains(
+                    component.x + component.width / 2.0,
+                    component.y + component.height / 2.0,
+                )
+                for frame in frames
+            )
         ]
-        claimed |= claim_similar(marker_sets, remaining)
-        leftovers = [component for component in leftovers if id(component) not in claimed]
+        claimed |= set(claim_similar(marker_sets, inside))
+        leftovers = [c for c in leftovers if id(c) not in claimed]
         blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
+    else:
+        leftovers = [c for c in leftovers if id(c) not in claimed]
+        blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
+
+    legends = assemble(frames, marker_sets, blocks)
 
     return Analysis(
         page, components, text_height, rules, ticks, traces, blocks,
-        regions=regions, marker_sets=marker_sets,
+        regions=regions, marker_sets=marker_sets, frames=frames, legends=legends,
     )
 
 
@@ -133,6 +151,11 @@ def read_blocks(analysis: Analysis, options: Options) -> None:
         for index, block in enumerate(analysis.blocks)
     }
 
+    # A legend entry names a series, so it is prose even when it reads poorly.
+    # Handing it to a formula recogniser turns a stray sample mark beside the
+    # word into \square and buries the name inside it.
+    legend_labels = {index for legend in analysis.legends for index in legend.blocks}
+
     pending: list[int] = []
     for index, block in enumerate(analysis.blocks):
         # Only a fraction bar settles the question on structure alone. Anything
@@ -142,7 +165,7 @@ def read_blocks(analysis: Analysis, options: Options) -> None:
             pending.append(index)
             continue
         reading = read_tesseract(crops[index])
-        if looks_like_prose(reading):
+        if looks_like_prose(reading) or (index in legend_labels and reading.text):
             analysis.readings[index] = reading
         else:
             pending.append(index)
@@ -530,6 +553,21 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
             )
         )
 
+    for index, frame in enumerate(analysis.frames):
+        elements.append(
+            ir.Frame(
+                kind="frame",
+                confidence=0.9,
+                provenance="closed box",
+                identifier=f"frame-{index}",
+                x=float(frame.x),
+                y=float(frame.y),
+                width=float(frame.width),
+                height=float(frame.height),
+                stroke_width=page.stroke_width,
+            )
+        )
+
     for index, tick_set in enumerate(analysis.ticks):
         elements.append(
             ir.Ticks(
@@ -548,6 +586,83 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
     return elements, notes
 
 
+def group_legends(
+    analysis: Analysis, geometry: list[ir.Element], labels: list[ir.Element]
+) -> tuple[list[ir.Element], list[ir.Element]]:
+    """Gather each legend's frame, samples and names into one group.
+
+    A legend is one object in the drawing and should be one object in the file,
+    so that moving it moves the box, the samples and the words together.
+    """
+    if not analysis.legends:
+        return geometry, labels
+
+    by_id = {element.identifier: element for element in geometry + labels}
+    spoken_for: set[str] = set()
+    groups: list[ir.Group] = []
+
+    for index, legend in enumerate(analysis.legends):
+        frame_index = next(
+            (i for i, frame in enumerate(analysis.frames) if frame is legend.frame), None
+        )
+        children: list[ir.Element] = []
+
+        frame_element = by_id.get(f"frame-{frame_index}") if frame_index is not None else None
+        if frame_element is not None:
+            children.append(frame_element)
+            spoken_for.add(frame_element.identifier)
+
+        named = 0
+        for position, entry in enumerate(legend.entries):
+            if entry.series is not None and entry.position is not None:
+                series = analysis.marker_sets[entry.series]
+                children.append(
+                    ir.MarkerField(
+                        kind="markers",
+                        confidence=0.9,
+                        provenance="legend sample",
+                        identifier=f"legend-{index}-sample-{position}",
+                        shape=series.shape,
+                        size=series.size,
+                        filled=series.filled,
+                        stroke_width=analysis.page.stroke_width,
+                        positions=[entry.position],
+                        symbol_id=f"marker-series-{entry.series}",
+                    )
+                )
+            if entry.block is None:
+                continue
+            label = by_id.get(f"label-{entry.block}")
+            if label is None:
+                continue
+            if entry.series is not None:
+                label.provenance = (
+                    f"names series-{entry.series}"
+                    + (f"; {label.provenance}" if label.provenance else "")
+                )
+                named += 1
+            children.append(label)
+            spoken_for.add(label.identifier)
+
+        if len(children) <= 1:
+            continue
+        groups.append(
+            ir.Group(
+                kind="legend",
+                confidence=0.85,
+                provenance="frame with samples and names",
+                identifier=f"legend-{index}",
+                label="legend",
+                note=f"{len(legend.entries)} entries, {named} tied to a series",
+                children=children,
+            )
+        )
+
+    geometry = [element for element in geometry if element.identifier not in spoken_for]
+    labels = [element for element in labels if element.identifier not in spoken_for]
+    return geometry, labels + groups
+
+
 def convert(path: Path, options: Options | None = None) -> ir.Document:
     options = options or Options()
     analysis = analyse(path, options)
@@ -556,6 +671,7 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
 
     geometry, curve_notes = build_geometry(analysis, options)
     labels = build_labels(analysis, fonts, options)
+    geometry, labels = group_legends(analysis, geometry, labels)
 
     page = analysis.page
     arrow_length = max(
@@ -608,6 +724,23 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
                 ),
             }
             for region in analysis.regions
+        ],
+        "legends": [
+            {
+                "box": [legend.frame.x, legend.frame.y, legend.frame.width, legend.frame.height],
+                "entries": [
+                    {
+                        "series": entry.series,
+                        "sample": (
+                            [round(entry.position[0], 1), round(entry.position[1], 1)]
+                            if entry.position else None
+                        ),
+                        "named": entry.block is not None,
+                    }
+                    for entry in legend.entries
+                ],
+            }
+            for legend in analysis.legends
         ],
         "marker_series": [
             {

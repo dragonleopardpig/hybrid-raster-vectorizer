@@ -233,14 +233,26 @@ def partition(
     rules: list[Rule],
     ticks: list[TickSet],
     text_height: float,
-) -> tuple[list[Trace], list[Component]]:
-    """Split what is left after the areas into traced strokes and text."""
+) -> tuple[list, list[Trace], list[Component]]:
+    """Split what is left after the areas into frames, traced strokes and text."""
+    from .shapes import Frame, is_frame
+
     furniture = furniture_mask(page, rules, ticks)
     residual = cv2.bitwise_and(working, cv2.bitwise_not(furniture))
 
+    frames: list[Frame] = []
     traces: list[Trace] = []
     leftovers: list[Component] = []
     for component in extract(residual):
+        if is_frame(component, page.stroke_width):
+            frames.append(
+                Frame(
+                    component=component,
+                    x=component.x, y=component.y,
+                    width=component.width, height=component.height,
+                )
+            )
+            continue
         if is_graphic(component, text_height, page.stroke_width):
             trace = trace_component(component)
             if trace is not None:
@@ -249,7 +261,7 @@ def partition(
         leftovers.append(component)
 
     maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
-    return chain(traces, maximum_gap=maximum_gap), leftovers
+    return frames, chain(traces, maximum_gap=maximum_gap), leftovers
 
 
 def extract_curves(
@@ -288,4 +300,4 @@ def extract_curves(
 
     traces = [trace for trace in (trace_component(piece) for piece in graphics) if trace is not None]
     maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
-    return chain(traces, maximum_gap=maximum_gap), leftovers
+    return frames, chain(traces, maximum_gap=maximum_gap), leftovers

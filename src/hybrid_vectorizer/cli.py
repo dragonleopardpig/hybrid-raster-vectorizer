@@ -94,6 +94,12 @@ def _run_convert(args: argparse.Namespace) -> None:
     for series in summary.get("marker_series", []):
         fill = "filled" if series["filled"] else "hollow"
         print(f"  markers     {series['count']} x {fill} {series['shape']}, {series['size_px']:.0f}px")
+    for legend in summary.get("legends", []):
+        tied = sum(1 for entry in legend["entries"] if entry["series"] is not None)
+        print(
+            f"  legend      {len(legend['entries'])} entries at {legend['box']}, "
+            f"{tied} tied to a marker series"
+        )
     for tick in summary["ticks"]:
         print(f"  ticks       {tick['count']} on the {tick['orientation']} axis, spacing {tick['spacing_px']}px")
     for label in summary["labels"]:

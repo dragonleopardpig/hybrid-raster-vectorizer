@@ -39,27 +39,34 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    `<symbol>` and placed with `<use>`. Once the shape is known from the copies
    out in the plot, the legend's sample is claimed by resemblance, since that one
    never stands alone.
-6. **Curves** — axes, arrowheads and ticks are erased, and what remains is
+6. **Legends** — a closed box whose ink is about what tracing its boundary once
+   would use, and whose hull fills its bounding box, is a frame. The samples
+   inside it are paired with the name to the right of each, and the frame,
+   samples and names are written as one `<g class="legend">`, with each name
+   carrying the series it names. A sample inside a legend is taken out of the
+   series it stands for: it is not a data point, and leaving it in would put a
+   reading at the legend's own coordinates.
+7. **Curves** — axes, arrowheads and ticks are erased, and what remains is
    traced along its centreline, per column where the stroke is a function of x
    and along the medial axis otherwise. Strokes that an erased axis cut apart
    are rejoined.
-7. **Fitting** — the trace is matched against straight lines, polynomials and
+8. **Fitting** — the trace is matched against straight lines, polynomials and
    sinusoids (period by spectrum, then a bracketed minimisation), and fitted
    with cubic Béziers by Schneider's algorithm to a tolerance set as a fraction
    of the pen width. The analytic reading is recorded on the path either way;
    `--idealise` redraws from it instead of from the ink.
-8. **Text** — leftover ink is grouped into labels. Fraction bars are found
+9. **Text** — leftover ink is grouped into labels. Fraction bars are found
    structurally, by being the only rule with ink both above and below, which is
    what separates them from an equals sign or a leading minus. Each bar claims
    its own numerator and denominator, so adjacent tick labels cannot run
    together.
-9. **Reading** — labels are routed to Tesseract or, through a persistent worker,
+10. **Reading** — labels are routed to Tesseract or, through a persistent worker,
    to PP-FormulaNet. A confident prose reading wins; anything else is treated as
    mathematics.
-10. **Typesetting** — the LaTeX is parsed and laid out using the real advance
+11. **Typesetting** — the LaTeX is parsed and laid out using the real advance
    widths of the matched font, then written as positioned SVG text. Repeated
    structures on one row are set in a single size.
-11. **Verification** — the finished SVG is rasterised with resvg and compared
+12. **Verification** — the finished SVG is rasterised with resvg and compared
    against the original ink, and the agreement is reported.
 
 The page is **transparent** and every mark paints with `currentColor`, so an
@@ -76,11 +83,12 @@ areas and markers are found — or whether looking for them misfires.
 
 | | result |
 |---|---|
-| ink agreement | recall 0.973, precision 0.988 within 3px |
+| ink agreement | recall 0.979, precision 0.978 within 3px |
 | filled area | found, boundary fitted |
 | ruled area | found at 45° and 9.9px, as a `<pattern>`, frame kept |
 | marker series | both found, named circle and rectangle, filled and hollow |
 | axes | one arrowhead each, on the correct end |
+| legend | found as one group, one of two rows tied to its series |
 
 The same detectors find **no** areas and **no** marker series in the
 interference figure, which is the property that matters: a test for a feature a
@@ -171,6 +179,11 @@ What *is* used instead:
   another from the *same* figure has no typeface mismatch, so identical symbols
   are clustered (complete-link, so every member resembles every other) and made
   to read alike. A rewrite needs at least three agreeing symbols.
+- **Strictness where a shape is the only evidence.** Claiming another copy of
+  a known marker needs near identity at near the same size. A filled disc, once
+  both shapes are scaled to a common box, overlaps most small blobs heavily:
+  letter fragments inside a legend score up to 0.86 against one, and so does a
+  full stop. At 0.75 it claimed a letter out of the caption.
 - **Honest flagging.** Glyphs in a confusable set are listed in the report, as
   are glyphs that touch a neighbour and so could not be checked against the ink
   at all. `--raster-fallback` embeds the original pixels for any label below the
@@ -223,9 +236,11 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 
 ## Still missing
 
-- Legends as a unit. The frame is traced and the entries read, but they are
-  not grouped into one object, and a sample mark touching its label becomes one
-  component with it, which no amount of proximity reasoning can undo.
+- Legends without a drawn frame, which are common; only a framed one is found.
+- A legend sample drawn hard against its label. It becomes one component with
+  the label, and splitting at the emptiest column does not help, because a
+  hollow sample's own interior is emptier than the gap beside it. The row is
+  recorded with its name and no sample rather than dropped.
 - Embedded images, and areas filled with anything other than solid ink or
   evenly spaced ruling.
 - Multi-line prose blocks and rotated text.

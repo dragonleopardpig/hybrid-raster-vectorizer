@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
-from .components import Component, extract
+from .components import Component, extract, split_into
 from .fitting import fit_bezier, path_data
 
 
@@ -391,31 +391,84 @@ def find_marker_sets(
     return sets, used
 
 
+@dataclass
+class Frame:
+    """A drawn box that holds other marks, such as a legend."""
+
+    component: Component
+    x: int = 0
+    y: int = 0
+    width: int = 0
+    height: int = 0
+
+    def contains(self, px: float, py: float, margin: float = 0.0) -> bool:
+        return (
+            self.x - margin <= px <= self.x + self.width + margin
+            and self.y - margin <= py <= self.y + self.height + margin
+        )
+
+
+def is_frame(component: Component, stroke_width: float) -> bool:
+    """A closed box drawn with a pen and empty inside.
+
+    Its ink is about what tracing the boundary once would use, and its convex
+    hull fills its bounding box, which a curve of the same extent does not.
+    """
+    if min(component.width, component.height) < 8 * stroke_width:
+        return False
+    if deep_fraction(component.mask, stroke_width) > 0.1:
+        return False
+
+    perimeter_ink = 2.0 * (component.width + component.height) * max(1.0, stroke_width)
+    if not (0.4 <= component.area / perimeter_ink <= 2.0):
+        return False
+
+    padded = cv2.copyMakeBorder(component.mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    contours, _hierarchy = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return False
+    hull = cv2.convexHull(max(contours, key=cv2.contourArea))
+    box = float(component.width * component.height)
+    return cv2.contourArea(hull) / max(1.0, box) >= 0.85
+
+
+def find_frames(components: list[Component], stroke_width: float) -> list[Frame]:
+    return [
+        Frame(component=c, x=c.x, y=c.y, width=c.width, height=c.height)
+        for c in components
+        if is_frame(c, stroke_width)
+    ]
+
+
 def claim_similar(
     sets: list[MarkerSet],
     components: list[Component],
     *,
-    threshold: float = 0.75,
-) -> set[int]:
-    """Find the rest of a known marker, including ones sitting beside a label.
+    threshold: float = 0.9,
+    size_tolerance: float = 0.12,
+) -> dict[int, Component]:
+    """Find another copy of a marker whose shape is already known.
 
-    A legend draws its sample right next to the words it explains, so that copy
-    never stands alone and the first pass cannot see it. Once the shape is known
-    from the copies out in the plot, the remaining ones can be claimed by
-    resemblance instead of by isolation.
+    The test has to be strict. A filled disc, once both shapes are scaled to a
+    common box, overlaps most small blobs heavily: letter fragments in a legend
+    score up to 0.86 against one, and a full stop scores 0.86. Only a near
+    identity, at near the same size, is evidence of another copy.
+
+    Splitting a mark that a sample has run into is not attempted. A hollow
+    sample has its own thin interior, so the emptiest column falls inside the
+    sample rather than between it and its neighbour.
     """
     from .consensus import similarity
 
-    taken: set[int] = set()
+    taken: dict[int, Component] = {}
     for series in sets:
         reference = max(series.components, key=lambda item: item.area)
+        span = max(reference.width, reference.height)
         for component in components:
             if id(component) in taken or component in series.components:
                 continue
-            ratio = max(component.width, component.height) / max(
-                1.0, max(reference.width, reference.height)
-            )
-            if not (0.75 <= ratio <= 1.33):
+            ratio = max(component.width, component.height) / max(1.0, span)
+            if not (1.0 - size_tolerance <= ratio <= 1.0 + size_tolerance):
                 continue
             if similarity(component.mask, reference.mask) < threshold:
                 continue
@@ -423,7 +476,7 @@ def claim_similar(
             series.positions.append(
                 (component.x + component.width / 2.0, component.y + component.height / 2.0)
             )
-            taken.add(id(component))
+            taken[id(component)] = component
     return taken
 
 

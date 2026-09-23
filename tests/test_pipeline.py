@@ -388,6 +388,106 @@ class ShapeTest(unittest.TestCase):
         self.assertFalse(has_border(self._component(bare), 2.0))
 
 
+class FrameTest(unittest.TestCase):
+    def _component(self, mask):
+        from hybrid_vectorizer.components import Component
+
+        return Component(
+            label=1, x=0, y=0, width=mask.shape[1], height=mask.shape[0],
+            area=int(np.count_nonzero(mask)), centroid=(0.0, 0.0), mask=mask,
+        )
+
+    def test_a_hollow_box_is_a_frame(self):
+        from hybrid_vectorizer.shapes import is_frame
+
+        mask = np.zeros((120, 240), np.uint8)
+        cv2.rectangle(mask, (3, 3), (236, 116), 255, 3)
+        self.assertTrue(is_frame(self._component(mask), 3.0))
+
+    def test_a_filled_box_is_not_a_frame(self):
+        from hybrid_vectorizer.shapes import is_frame
+
+        mask = np.zeros((120, 240), np.uint8)
+        cv2.rectangle(mask, (3, 3), (236, 116), 255, -1)
+        self.assertFalse(is_frame(self._component(mask), 3.0))
+
+    def test_a_curve_of_the_same_extent_is_not_a_frame(self):
+        from hybrid_vectorizer.shapes import is_frame
+
+        mask = np.zeros((120, 240), np.uint8)
+        xs = np.arange(5, 235)
+        ys = (60 + 45 * np.sin(xs / 25.0)).astype(int)
+        for x, y in zip(xs, ys):
+            cv2.circle(mask, (int(x), int(y)), 2, 255, -1)
+        self.assertFalse(is_frame(self._component(mask), 3.0))
+
+
+class LegendAssemblyTest(unittest.TestCase):
+    def _block(self, x, y, width, height):
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.textlayout import Block
+
+        mask = np.full((height, width), 255, np.uint8)
+        return Block(components=[Component(
+            label=1, x=x, y=y, width=width, height=height, area=width * height,
+            centroid=(x + width / 2.0, y + height / 2.0), mask=mask,
+        )])
+
+    def _series(self, positions):
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.shapes import MarkerSet
+
+        components = [
+            Component(label=1, x=int(x) - 5, y=int(y) - 5, width=10, height=10, area=100,
+                      centroid=(x, y), mask=np.full((10, 10), 255, np.uint8))
+            for x, y in positions
+        ]
+        return MarkerSet(shape="circle", filled=True, size=10.0,
+                         positions=list(positions), components=components)
+
+    def _frame(self):
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.shapes import Frame
+
+        component = Component(label=1, x=100, y=100, width=200, height=80, area=1,
+                              centroid=(200.0, 140.0), mask=np.zeros((80, 200), np.uint8))
+        return Frame(component=component, x=100, y=100, width=200, height=80)
+
+    def test_a_sample_inside_the_frame_is_not_a_data_point(self):
+        from hybrid_vectorizer.legend import assemble
+
+        series = self._series([(20.0, 20.0), (50.0, 30.0), (130.0, 130.0)])
+        legends = assemble([self._frame()], [series], [self._block(160, 118, 60, 24)])
+        self.assertEqual(len(legends), 1)
+        self.assertEqual(len(series.positions), 2, "the sample must leave the series")
+        self.assertNotIn((130.0, 130.0), series.positions)
+
+    def test_the_sample_is_paired_with_the_name_to_its_right(self):
+        from hybrid_vectorizer.legend import assemble
+
+        series = self._series([(20.0, 20.0), (130.0, 130.0)])
+        blocks = [self._block(160, 118, 60, 24)]
+        legend = assemble([self._frame()], [series], blocks)[0]
+        tied = [entry for entry in legend.entries if entry.series is not None]
+        self.assertEqual(len(tied), 1)
+        self.assertEqual(tied[0].block, 0)
+
+    def test_a_row_whose_sample_cannot_be_separated_is_still_recorded(self):
+        from hybrid_vectorizer.legend import assemble
+
+        series = self._series([(20.0, 20.0), (130.0, 130.0)])
+        blocks = [self._block(160, 118, 60, 24), self._block(120, 150, 90, 24)]
+        legend = assemble([self._frame()], [series], blocks)[0]
+        self.assertEqual(len(legend.entries), 2)
+        self.assertEqual(sum(1 for e in legend.entries if e.series is None), 1)
+
+    def test_nothing_is_assembled_without_a_frame(self):
+        from hybrid_vectorizer.legend import assemble
+
+        series = self._series([(20.0, 20.0)])
+        self.assertEqual(assemble([], [series], [self._block(160, 118, 60, 24)]), [])
+
+
 class ArrowTest(unittest.TestCase):
     def test_a_long_thin_spike_is_not_an_arrowhead(self):
         """A cut-away filled area leaves a taper far longer than it is wide."""
@@ -436,6 +536,22 @@ class MixedFigureTest(unittest.TestCase):
         self.assertEqual(hatched.outline.kind, "rectangle")
         self.assertTrue(hatched.bordered)
 
+    def test_the_legend_is_one_object_tied_to_a_series(self):
+        self.assertEqual(len(self.analysis.frames), 1)
+        self.assertEqual(len(self.analysis.legends), 1)
+        legend = self.analysis.legends[0]
+        self.assertEqual(len(legend.entries), 2)
+        self.assertEqual(sum(1 for e in legend.entries if e.series is not None), 1)
+
+    def test_no_legend_sample_is_counted_as_data(self):
+        legend = self.analysis.legends[0]
+        for series in self.analysis.marker_sets:
+            for x, y in series.positions:
+                self.assertFalse(
+                    legend.frame.contains(x, y, 4.0),
+                    f"a {series.shape} at ({x:.0f},{y:.0f}) is the legend's own sample",
+                )
+
     def test_two_marker_series_with_the_right_shapes(self):
         shapes = sorted(series.shape for series in self.analysis.marker_sets)
         self.assertEqual(shapes, ["circle", "rectangle"])
@@ -465,6 +581,8 @@ class NoRegressionTest(unittest.TestCase):
         analysis = analyse(EXAMPLE, Options())
         self.assertEqual(analysis.regions, [])
         self.assertEqual(analysis.marker_sets, [])
+        self.assertEqual(analysis.frames, [])
+        self.assertEqual(analysis.legends, [])
         self.assertEqual(len(analysis.traces), 1)
         self.assertEqual(len(analysis.blocks), 11)
 
@@ -500,6 +618,29 @@ class OutputTest(unittest.TestCase):
         content = self._document().to_svg()
         self.assertIn("prefers-color-scheme: dark", content)
         self.assertIn("svg { color:", content)
+
+    def test_a_group_nests_its_children_and_their_definitions(self):
+        from hybrid_vectorizer import ir
+
+        document = ir.Document(width=200, height=100)
+        document.geometry.append(
+            ir.MarkerField(kind="markers", identifier="series-0", shape="circle",
+                           size=8, positions=[(20, 20)])
+        )
+        document.labels.append(
+            ir.Group(kind="legend", identifier="legend-0", label="legend", children=[
+                ir.Frame(kind="frame", identifier="frame-0", x=100, y=10,
+                         width=80, height=50, stroke_width=2),
+                ir.MarkerField(kind="markers", identifier="legend-0-sample-0", shape="circle",
+                               size=8, positions=[(112, 25)], symbol_id="marker-series-0"),
+            ])
+        )
+        content = document.to_svg()
+        root = ET.fromstring(content)
+        group = root.find(f".//{SVG_NAMESPACE}g[@id='legend-0']")
+        self.assertIsNotNone(group)
+        self.assertEqual(len(group.findall(f"{SVG_NAMESPACE}rect")), 1)
+        self.assertEqual(content.count('id="marker-series-0"'), 1, "one definition only")
 
     def test_the_document_still_parses_as_svg(self):
         root = ET.fromstring(self._document().to_svg())

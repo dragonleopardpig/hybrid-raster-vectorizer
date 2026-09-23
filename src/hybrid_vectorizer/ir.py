@@ -145,9 +145,12 @@ class Area(Element):
 
     def to_svg(self, indent: str) -> list[str]:
         fill = f'url(#{self.pattern})' if self.pattern else "currentColor"
+        # Written as attributes, not as a class rule: a stylesheet rule would
+        # beat the attribute and silently erase a frame that was really drawn.
         edge = (
             f' stroke="currentColor" stroke-width="{_number(self.border_width)}"'
-            if self.bordered else ""
+            if self.bordered
+            else ' stroke="none"'
         )
         common = f'class="area {self.shape}" {self.attributes()} fill="{fill}"{edge}'
         if self.shape == "rectangle" and self.parameters:
@@ -175,10 +178,11 @@ class MarkerField(Element):
     stroke_width: float = 1.0
     positions: list[tuple[float, float]] = field(default_factory=list)
     parameters: dict = field(default_factory=dict)
+    symbol_id: str | None = None
 
     @property
     def symbol(self) -> str:
-        return f"marker-{self.identifier}"
+        return self.symbol_id or f"marker-{self.identifier}"
 
     def _primitive(self) -> str:
         paint = (
@@ -201,6 +205,8 @@ class MarkerField(Element):
         return f'<circle cx="0" cy="0" r="{_number(radius)}" {paint}/>'
 
     def defs(self) -> list[str]:
+        if self.symbol_id:
+            return []  # drawn with a shape another series already declared
         return [
             f'    <g id="{_attribute(self.symbol)}">',
             f"      {self._primitive()}",
@@ -216,6 +222,45 @@ class MarkerField(Element):
                 f'{indent}  <use href="#{_attribute(self.symbol)}" '
                 f'xlink:href="#{_attribute(self.symbol)}" x="{_number(x)}" y="{_number(y)}"/>'
             )
+        lines.append(f"{indent}</g>")
+        return lines
+
+
+@dataclass
+class Frame(Element):
+    """A drawn box, such as the one around a legend."""
+
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 0.0
+    height: float = 0.0
+    stroke_width: float = 1.0
+
+    def to_svg(self, indent: str) -> list[str]:
+        return [
+            f'{indent}<rect class="frame" {self.attributes()} '
+            f'x="{_number(self.x)}" y="{_number(self.y)}" '
+            f'width="{_number(self.width)}" height="{_number(self.height)}" '
+            f'stroke-width="{_number(self.stroke_width)}"/>'
+        ]
+
+
+@dataclass
+class Group(Element):
+    """Several elements that belong together, such as a legend and its rows."""
+
+    label: str = "group"
+    children: list[Element] = field(default_factory=list)
+    note: str = ""
+
+    def defs(self) -> list[str]:
+        return [line for child in self.children for line in child.defs()]
+
+    def to_svg(self, indent: str) -> list[str]:
+        note = f' data-note="{_attribute(self.note)}"' if self.note else ""
+        lines = [f'{indent}<g class="{_attribute(self.label)}" {self.attributes()}{note}>']
+        for child in self.children:
+            lines.extend(child.to_svg(indent + "  "))
         lines.append(f"{indent}</g>")
         return lines
 
@@ -327,7 +372,7 @@ class Document:
             f" font-weight: {weight}; }}",
             "    .italic { font-style: italic; }",
             "    .upright { font-style: normal; }",
-            "    .area { stroke: none; }",
+            "    .frame { fill: none; stroke: currentColor; }",
             "    .markers { color: inherit; }",
             "  </style>",
         ]
