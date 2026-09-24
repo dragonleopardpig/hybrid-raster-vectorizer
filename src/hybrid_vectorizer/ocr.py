@@ -55,10 +55,24 @@ def isolate(
 
 
 def turned(image: np.ndarray, angle: float) -> np.ndarray:
-    """Turn a crop upright so it can be read, given the angle it is drawn at."""
-    if angle < 0:
-        return cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
-    return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    """Turn a crop upright, given the angle its text is set at.
+
+    The canvas is grown to hold the corners, so a label set on a slope is not
+    clipped by the box it arrived in.
+    """
+    if abs(angle % 360.0) < 1e-6:
+        return image
+    height, width = image.shape[:2]
+    matrix = cv2.getRotationMatrix2D((width / 2.0, height / 2.0), angle, 1.0)
+    cos, sin = abs(matrix[0, 0]), abs(matrix[0, 1])
+    grown_width = int(height * sin + width * cos)
+    grown_height = int(height * cos + width * sin)
+    matrix[0, 2] += grown_width / 2.0 - width / 2.0
+    matrix[1, 2] += grown_height / 2.0 - height / 2.0
+    return cv2.warpAffine(
+        image, matrix, (grown_width, grown_height),
+        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255,
+    )
 
 
 def read_tesseract(image: np.ndarray, *, psm: int = 7, language: str = "eng") -> Reading:
@@ -180,19 +194,32 @@ def _rotated(image: np.ndarray, degrees: float) -> np.ndarray:
     )
 
 
-def legibility(reading: "Reading") -> float:
-    """How much a reading looks like language rather than punctuation soup.
+def upright_bias(image: np.ndarray, *, limit: float = 0.2, weight: float = 0.5) -> float:
+    """Whether a crop has more ink above its body than below, which type does.
 
-    Confidence alone cannot choose which way up a turned label goes: read both
-    ways, this figure's label scores 0.67 either way, as 'v =Asing' and as
-    'dusy=~"'. Tesseract's own orientation detector is the right tool for the
-    question and refuses a label this short, so what is left is that real text
-    is mostly letters.
+    Latin type puts capitals and ascenders above the x-height and only a few
+    tails below the baseline, and turning the crop end for end swaps the two.
+    It is a weak signal on its own — on a label reading "y = A sin phi" it is
+    nearly flat and points the wrong way — so it is only ever used to break a
+    tie between two readings the recogniser is equally sure of.
     """
-    if not reading.text:
+    ink = (image < 128).astype(np.float32)
+    rows = ink.sum(axis=1)
+    total = float(rows.sum())
+    if total <= 0:
         return 0.0
-    letters = sum(1 for character in reading.text if character.isalnum() or character == " ")
-    return reading.confidence * (letters / len(reading.text))
+
+    # The body of the line is the densest band; ascenders and tails lie outside.
+    order = np.argsort(rows)[::-1]
+    gathered, kept = 0.0, []
+    for row in order:
+        kept.append(int(row))
+        gathered += float(rows[row])
+        if gathered >= 0.5 * total:
+            break
+    top, bottom = min(kept), max(kept)
+    asymmetry = (float(rows[:top].sum()) - float(rows[bottom + 1 :].sum())) / total
+    return weight * float(np.clip(asymmetry, -limit, limit))
 
 
 _WORDLIKE = re.compile(r"^[A-Za-z][A-Za-z.'-]*$")

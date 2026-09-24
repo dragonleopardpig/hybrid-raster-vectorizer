@@ -190,6 +190,36 @@ def _has_script(block: Block) -> bool:
     return bool(script_components(block))
 
 
+def text_angle(
+    block: Block, *, minimum_marks: int = 4, linearity: float = 3.0, deadband: float = 12.0
+) -> float:
+    """The angle a label is set at, from how its marks are strung out.
+
+    A label following a sloping line is neither upright nor a quarter turn, so
+    the angle has to be measured rather than chosen from a list. A fraction
+    stacks its marks vertically without being turned at all, so blocks with a
+    bar are left alone, and a short label needs four marks before a slope is
+    believed: three marks of "4I" with a sunken subscript measure 22 degrees.
+    """
+    if block.bars or len(block.components) < minimum_marks:
+        return 0.0
+
+    centres = np.array(
+        [[c.x + c.width / 2.0, c.y + c.height / 2.0] for c in block.components], dtype=float
+    )
+    centred = centres - centres.mean(axis=0)
+    _u, spread, axes = np.linalg.svd(centred, full_matrices=False)
+    # Written this way round so that marks lying exactly on a line, where the
+    # spread across it is zero, read as perfectly linear rather than as a
+    # division that has to be guarded away.
+    if spread[0] <= 1e-9 or spread[1] * linearity > spread[0]:
+        return 0.0
+
+    angle = float(np.degrees(np.arctan2(axes[0][1], axes[0][0])))
+    angle = (angle + 90.0) % 180.0 - 90.0
+    return 0.0 if abs(angle) < deadband else angle
+
+
 def group_vertical(
     blocks: list[Block],
     text_height: float,

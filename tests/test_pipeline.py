@@ -188,6 +188,59 @@ class RotatedTextTest(unittest.TestCase):
         self.assertEqual(len(merged), 4)
         self.assertTrue(all(block.orientation == "horizontal" for block in merged))
 
+    def test_a_slope_is_measured_not_chosen_from_a_list(self):
+        from hybrid_vectorizer.textlayout import text_angle
+
+        blocks = [self._block(100 + step * 30, 300 - step * 30, 20, 20) for step in range(6)]
+        block = blocks[0]
+        block.components = [b.components[0] for b in blocks]
+        self.assertAlmostEqual(text_angle(block), -45.0, delta=4.0)
+
+    def test_upright_text_measures_no_slope(self):
+        from hybrid_vectorizer.textlayout import text_angle
+
+        blocks = [self._block(100 + step * 30, 300, 20, 20) for step in range(6)]
+        block = blocks[0]
+        block.components = [b.components[0] for b in blocks]
+        self.assertEqual(text_angle(block), 0.0)
+
+    def test_three_marks_are_too_few_to_show_a_slope(self):
+        """'4I' with a sunken subscript measures 22 degrees and is not turned."""
+        from hybrid_vectorizer.textlayout import text_angle
+
+        block = self._block(100, 300, 18, 22)
+        block.components += [
+            self._block(120, 300, 12, 22).components[0],
+            self._block(134, 312, 14, 14).components[0],
+        ]
+        self.assertEqual(text_angle(block), 0.0)
+
+    def test_a_fraction_is_stacked_but_not_turned(self):
+        from hybrid_vectorizer.textlayout import text_angle
+
+        block = self._block(100, 300, 40, 20)
+        block.components += [
+            self._block(100, 326, 60, 6).components[0],
+            self._block(105, 340, 34, 20).components[0],
+            self._block(108, 366, 30, 20).components[0],
+        ]
+        block.bars = [block.components[1]]
+        self.assertEqual(text_angle(block), 0.0)
+
+    def test_turning_by_any_angle_keeps_the_corners(self):
+        from hybrid_vectorizer.ocr import turned
+
+        image = np.full((40, 120), 255, np.uint8)
+        image[8:32, 10:110] = 0
+        grown = turned(image, -45.0)
+        self.assertGreater(grown.shape[0], 40)
+        self.assertGreater(grown.shape[1], 40)
+        self.assertGreater(
+            np.count_nonzero(grown < 128),
+            0.85 * np.count_nonzero(image < 128),
+            "the ink was clipped by the box it arrived in",
+        )
+
     def test_turning_a_crop_is_reversible(self):
         from hybrid_vectorizer.ocr import turned
 
@@ -197,12 +250,20 @@ class RotatedTextTest(unittest.TestCase):
         self.assertEqual(turned(image, 90.0).shape, (90, 40))
         self.assertFalse(np.array_equal(turned(image, -90.0), turned(image, 90.0)))
 
-    def test_letters_beat_punctuation_when_choosing_which_way_up(self):
-        from hybrid_vectorizer.ocr import Reading, legibility
+    def test_type_sitting_the_right_way_up_scores_higher(self):
+        from hybrid_vectorizer.ocr import upright_bias
 
-        upright = Reading(text="v =Asing", engine="tesseract", confidence=0.67)
-        upside = Reading(text='dusy=~"', engine="tesseract", confidence=0.67)
-        self.assertGreater(legibility(upright), legibility(upside))
+        line = np.full((90, 260), 255, np.uint8)
+        cv2.putText(line, "Alphabet", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4, 0, 4)
+        self.assertGreater(upright_bias(line), upright_bias(cv2.rotate(line, cv2.ROTATE_180)))
+
+    def test_the_tie_break_cannot_outweigh_confidence(self):
+        """It is a weak signal, so it must never overrule the recogniser."""
+        from hybrid_vectorizer.ocr import upright_bias
+
+        line = np.full((90, 260), 255, np.uint8)
+        cv2.putText(line, "Alphabet", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.4, 0, 4)
+        self.assertLessEqual(abs(upright_bias(line)), 0.1)
 
     def test_a_turned_label_is_placed_by_transform(self):
         from hybrid_vectorizer import ir
@@ -906,6 +967,12 @@ class ScannedFigureTest(unittest.TestCase):
         vertical = [b for b in self.analysis.blocks if b.orientation == "vertical"]
         self.assertEqual(len(vertical), 1)
         self.assertGreater(vertical[0].height, 2 * vertical[0].width)
+
+    def test_the_label_set_along_the_vector_is_found_at_its_own_angle(self):
+        from hybrid_vectorizer.textlayout import text_angle
+
+        block = next(b for b in self.analysis.blocks if (b.x, b.y) == (174, 310))
+        self.assertAlmostEqual(text_angle(block), -44.8, delta=5.0)
 
     def test_they_run_at_right_angles_to_each_other(self):
         import numpy as np

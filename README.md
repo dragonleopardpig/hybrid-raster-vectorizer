@@ -79,7 +79,11 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    pieces; those are rejoined by the one thing that makes them a line — narrow
    pieces sharing a column, stacked tightly. A column of tick labels also
    shares an x, but each of those is wider than it is tall and they stand much
-   further apart. Fraction bars are found
+   further apart. The angle a label is set at is then measured from how its
+   marks are strung out, rather than chosen from a list of upright and quarter
+   turns — one label on these scans runs along the vector it describes, at 45°.
+   Four marks are needed before a slope is believed: three marks of `4I` with a
+   sunken subscript measure 22°. Fraction bars are found
    structurally, by being the only rule with ink both above and below, which is
    what separates them from an equals sign or a leading minus. Each bar claims
    its own numerator and denominator, so adjacent tick labels cannot run
@@ -87,10 +91,13 @@ and every decision it makes is recorded in a JSON report beside the SVG.
 11. **Reading** — labels are routed to Tesseract or, through a persistent worker,
    to PP-FormulaNet. A confident prose reading wins; anything else is treated as
    mathematics. A turned label is read both ways up and the more legible answer
-   kept. Confidence cannot choose — one figure's label scores 0.67 either way,
-   as `v =Asing` and as `dusy=~"` — and Tesseract's own orientation detector,
-   which is the right tool, refuses a label this short. What is left is that
-   real text is mostly letters.
+   kept. Confidence settles it where the two readings differ: the turned label
+   scores 0.68 upright against 0.27 upside down. Where confidence ties, as it
+   does on the sloping label at 0.81 against 0.82, which way up the type sits
+   breaks it — Latin type puts capitals and ascenders above the x-height and
+   only a few tails below, and turning the crop end for end swaps the two.
+   Tesseract's own orientation detector is the right tool for the question and
+   refuses a label this short.
 12. **Typesetting** — the LaTeX is parsed and laid out using the real advance
    widths of the matched font, then written as positioned SVG text. Repeated
    structures on one row are set in a single size. A turned label is laid out
@@ -276,7 +283,7 @@ should be.
 
 | figure | paper spread | blocks | note |
 |---|---|---|---|
-| `complex.png` | 8 | 8 | clean; ink agreement 0.89 recall, 0.87 precision; every label but one read correctly |
+| `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
 | `waves1.png` | 0 | 44 | clean |
 | `thicklens_cascade.png` | 42 | 38 | flattened |
 | `refraction.png` | 56 | 53 | flattened; grey stipple read as filled areas |
@@ -297,12 +304,13 @@ Shading as dark as the ink is not separable this way and is not attempted.
 | the label up the side of the axis | → 0.840 |
 | LaTeX style commands keep what they wrap | → 0.857 |
 | words in heavy type read instead of traced | → 0.893 |
+| the label set along the vector, at its own angle | → **0.910** |
 
-`Imaginary`, `Real`, `y = A sin φ`, `x = A cos φ` and `Fig. 1-6` all come out
-right, as do both axes, both broken lines and the vector. `A = |z|` does not.
-Precision fell slightly, from 0.899 to 0.870, because those words are now set in
-an installed face rather than traced as the shapes they actually are — which is
-the trade the whole project makes.
+Every label on that figure now reads correctly — `Imaginary`, `Real`,
+`y = A sin φ`, `x = A cos φ`, `A = |z|` and `Fig. 1-6` — as do both axes, both
+broken lines and the vector. Precision fell from 0.899 to 0.866 along the way,
+because those words are now set in an installed face rather than traced as the
+shapes they actually are, which is the trade the whole project makes.
 
 ## Still missing
 
@@ -312,7 +320,7 @@ the trade the whole project makes.
   recorded with its name and no sample rather than dropped.
 - Dash-dot and other mixed patterns: the period test expects one dash length,
   so a line that alternates long and short is not recognised as one line.
-- Text at any angle other than upright or a quarter turn.
+- Text on a curve, and text whose marks do not lie on a straight line.
 - Embedded images, and areas filled with anything other than solid ink or
   evenly spaced ruling. Grey stipple is read as a filled area.
 - Multi-line prose blocks and rotated text.

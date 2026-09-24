@@ -21,10 +21,10 @@ from .ocr import (
     Reading,
     augmentations,
     isolate,
-    legibility,
     looks_like_prose,
     read_tesseract,
     turned,
+    upright_bias,
 )
 from .preprocess import Page, load_page
 from .primitives import Rule, TickSet, detect_rules, detect_ticks
@@ -51,7 +51,7 @@ from .shapes import (
     find_marker_sets,
     region_path,
 )
-from .textlayout import Block, group_blocks
+from .textlayout import Block, group_blocks, text_angle
 from .tracing import Trace, partition
 
 
@@ -146,19 +146,21 @@ def read_blocks(analysis: Analysis, options: Options) -> None:
     crops: dict[int, np.ndarray] = {}
     for index, block in enumerate(analysis.blocks):
         crop = isolate(page.gray, block.components)
-        if block.orientation != "vertical":
+        slope = text_angle(block)
+        if abs(slope) < 1e-6:
             crops[index] = crop
             continue
-        # Which way up is not knowable from the ink, so both are read and the
-        # one the recogniser is more sure of is taken.
+        # Which end the text starts from is not knowable from the ink. The
+        # recogniser's own confidence decides it where the two differ, and where
+        # they do not, which way up the type sits does.
         best = None
-        for angle in (-90.0, 90.0):
+        for angle in (slope, slope + 180.0):
             candidate = turned(crop, angle)
-            score = legibility(read_tesseract(candidate))
+            score = read_tesseract(candidate).confidence + upright_bias(candidate)
             if best is None or score > best[0]:
                 best = (score, angle, candidate)
         _score, angle, candidate = best
-        analysis.rotations[index] = angle
+        analysis.rotations[index] = ((angle + 180.0) % 360.0) - 180.0
         crops[index] = candidate
 
     # A legend entry names a series, so it is prose even when it reads poorly.
@@ -255,8 +257,9 @@ def _block_ink(page: Page, block: Block, angle: float | None = None) -> np.ndarr
     if angle is None:
         return window
     # Size and score a turned label against ink turned the same way.
-    turn = cv2.ROTATE_90_CLOCKWISE if angle < 0 else cv2.ROTATE_90_COUNTERCLOCKWISE
-    return cv2.rotate(window, turn)
+    from .ocr import turned
+
+    return turned(window, angle)
 
 
 def _ink_extent(image: np.ndarray) -> tuple[int, int]:
@@ -363,7 +366,7 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         angle = analysis.rotations.get(index)
         ink = _block_ink(page, block, angle)
         node = _measure_node(reading, block)
-        along = float(block.height if angle is not None else block.width)
+        along = float(_ink_extent(ink)[0] if angle is not None else block.width)
         size, score = _best_size(node, fonts, ink, along)
         prepared.append(
             Prepared(index=index, block=block, reading=reading, node=node, size=size, score=score)
