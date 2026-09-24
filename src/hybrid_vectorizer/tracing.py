@@ -21,6 +21,8 @@ class Trace:
     stroke_width: float
     components: list[Component] = field(default_factory=list)
     method: str = "column"
+    dash: float = 0.0
+    gap: float = 0.0
 
     @property
     def start(self) -> np.ndarray:
@@ -339,6 +341,112 @@ def chain(traces: list[Trace], *, maximum_gap: float) -> list[Trace]:
     return merged + other
 
 
+def follow_dashed_curves(
+    pieces: list[Component],
+    stroke_width: float,
+    maximum_gap: float,
+    *,
+    minimum: int = 4,
+    forward: float = 0.55,
+    regularity: float = 0.3,
+    widest_gap: float = 3.5,
+    shortest_run: float = 8.0,
+) -> list[Trace]:
+    """Join the marks of a broken line that bends.
+
+    A straight one can be found by the line its marks share; a dashed curve has
+    no such line. Each mark is followed instead, taking the nearest mark that
+    lies ahead in the direction the last one was heading, which lets the run
+    turn. The spacing still has to repeat, or a caption's letters would be
+    followed just as happily.
+    """
+    from .dashes import _period
+
+    traced = [
+        trace
+        for trace in (trace_component(piece) for piece in pieces)
+        if trace is not None and trace.points.shape[0] >= 3
+    ]
+    if len(traced) < minimum:
+        return []
+    traced.sort(key=lambda trace: float(trace.points[0][0]))
+
+    reach = 3.0 * maximum_gap
+    used: set[int] = set()
+    curves: list[Trace] = []
+
+    for seed in traced:
+        if id(seed) in used:
+            continue
+        run = [seed]
+        used.add(id(seed))
+        while True:
+            last = run[-1].points
+            tip = last[-1]
+            back = last[max(0, last.shape[0] - 5)]
+            heading = tip - back
+            size = float(np.linalg.norm(heading))
+            heading = heading / size if size > 1e-6 else None
+
+            best: tuple[float, Trace] | None = None
+            for candidate in traced:
+                if id(candidate) in used:
+                    continue
+                step = candidate.points[0] - tip
+                distance = float(np.linalg.norm(step))
+                if distance <= 0 or distance > reach:
+                    continue
+                if heading is not None and float(np.dot(step / distance, heading)) < forward:
+                    continue
+                if best is None or distance < best[0]:
+                    best = (distance, candidate)
+            if best is None:
+                break
+            used.add(id(best[1]))
+            run.append(best[1])
+
+        if len(run) < minimum:
+            for trace in run[1:]:
+                used.discard(id(trace))
+            if len(run) > 1:
+                used.discard(id(run[0]))
+            continue
+
+        centres = np.array(
+            [trace.points.mean(axis=0) for trace in run], dtype=float
+        )
+        steps = np.linalg.norm(np.diff(centres, axis=0), axis=1)
+        period, residual = _period(steps)
+        if period <= 0 or residual > regularity:
+            for trace in run:
+                used.discard(id(trace))
+            continue
+
+        points = np.vstack([trace.points for trace in run])
+        spans = [float(np.linalg.norm(t.points[-1] - t.points[0])) for t in run]
+        dash = max(1.0, float(np.median(spans)))
+        gap = float(max(1.0, period - dash))
+        reach_of_run = float(np.linalg.norm(centres[-1] - centres[0]))
+        # A handful of marks a few dash-lengths apart, or strung barely further
+        # than one mark, is a legend or a caption rather than a line.
+        if gap > widest_gap * dash or reach_of_run < shortest_run * dash:
+            for trace in run:
+                used.discard(id(trace))
+            continue
+
+        curves.append(
+            Trace(
+                points=points,
+                stroke_width=float(np.median([trace.stroke_width for trace in run])),
+                components=[c for trace in run for c in trace.components],
+                method="column",
+                dash=dash,
+                gap=gap,
+            )
+        )
+    return curves
+
+
 def partition(
     page: Page,
     working: np.ndarray,
@@ -347,7 +455,7 @@ def partition(
     text_height: float,
 ) -> tuple[list, list, list[Trace], list[Component]]:
     """Split what is left into broken lines, frames, traced strokes and text."""
-    from .dashes import find_dashed_lines
+    from .dashes import find_dashed_lines, is_dash
     from .shapes import Frame, is_frame
 
     furniture = furniture_mask(page, rules, ticks)
@@ -361,8 +469,22 @@ def partition(
     )
     pieces = [piece for piece in pieces if id(piece) not in claimed]
 
+    # What is left of the broken lines does not run straight, so its marks
+    # cannot be grouped by a shared line. They are followed instead: each mark
+    # continues in the direction the last one was heading.
+    maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
+    spare = [
+        piece
+        for piece in pieces
+        if is_dash(piece, page.stroke_width, (page.width, page.height))
+    ]
+    curved = follow_dashed_curves(spare, page.stroke_width, maximum_gap)
+    if curved:
+        taken = {id(c) for trace in curved for c in trace.components}
+        pieces = [piece for piece in pieces if id(piece) not in taken]
+
     frames: list[Frame] = []
-    traces: list[Trace] = []
+    traces: list[Trace] = list(curved)
     leftovers: list[Component] = []
     for component in pieces:
         if is_frame(component, page.stroke_width):
@@ -382,7 +504,6 @@ def partition(
                 continue
         leftovers.append(component)
 
-    maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
     return dashed, frames, chain(traces, maximum_gap=maximum_gap), leftovers
 
 
@@ -421,5 +542,4 @@ def extract_curves(
     leftovers = [piece for piece in pieces if piece not in graphics]
 
     traces = [trace for trace in (trace_component(piece) for piece in graphics) if trace is not None]
-    maximum_gap = max(4.0 * page.stroke_width, 0.015 * page.width)
     return dashed, frames, chain(traces, maximum_gap=maximum_gap), leftovers

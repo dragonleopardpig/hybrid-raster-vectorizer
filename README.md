@@ -65,6 +65,12 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    not is a numerator above it and a denominator below. Dash *length* is
    deliberately not used to judge a chain, because the marks at each end of a
    line are clipped and vary as much as a false chain's do.
+
+   A broken line that *bends* has no shared line to be grouped by, so its marks
+   are followed instead: each one continues in the direction the last was
+   heading, which lets the run turn. The spacing still has to repeat, or a
+   caption's letters would be followed just as happily, and the run has to
+   travel several dash lengths, or a legend's sample and its label would.
 7. **Legends** — a closed box whose ink is about what tracing its boundary once
    would use, and whose hull fills its bounding box, is a frame. Without a box —
    which is the common case — a legend is found by the shape of its rows
@@ -316,10 +322,10 @@ should be.
 | figure | paper spread | blocks | note |
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
-| `waves1.png` | 0 | 41 | 0.83 recall, 0.83 precision |
+| `waves1.png` | 0 | 33 | 0.91 recall, 0.84 precision; its dashed waves followed as curves |
 | `thicklens_cascade.png` | 8 | 42 | 0.89 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
 | `refraction.png` | 36 | 46 | 0.88 recall, 0.88 precision; the shaded slab read as a 12% tint |
-| `wavefront.png` | 60 | 154 | heavy grain throughout; still the worst case |
+| `wavefront.png` | 60 | 130 | 0.91 recall, 0.95 precision; heavy grain throughout |
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
 ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
@@ -352,7 +358,6 @@ shapes they actually are, which is the trade the whole project makes.
   recorded with its name and no sample rather than dropped.
 - Dash-dot and other mixed patterns: the period test expects one dash length,
   so a line that alternates long and short is not recognised as one line.
-- Curved broken lines: the marks are matched along a straight run.
 - A symbol the recogniser names but this renderer has no glyph for. It draws
   nothing rather than setting the command's own name as a word, which is how
   `twoheadrightarrow` came to be written across a figure in place of an arrow.

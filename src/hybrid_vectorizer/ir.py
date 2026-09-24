@@ -104,6 +104,8 @@ class Curve(Element):
     arrow_end: bool = False
     arrow_length: float = 12.0
     arrow_width: float = 10.0
+    dash: float = 0.0
+    gap: float = 0.0
 
     @property
     def head(self) -> str:
@@ -140,13 +142,18 @@ class Curve(Element):
             model = f' data-model="{_attribute(self.model)}"'
             if self.model_rms is not None:
                 model += f' data-model-residual="{self.model_rms:.2f}"'
+        pattern = (
+            f' stroke-dasharray="{_number(self.dash)} {_number(self.gap)}"'
+            if self.dash > 0 and self.gap > 0
+            else ""
+        )
         markers = ""
         if self.arrow_end:
             markers += f' marker-end="url(#{_attribute(self.head)}-end)"'
         if self.arrow_start:
             markers += f' marker-start="url(#{_attribute(self.head)}-start)"'
         return [
-            f'{indent}<path class="curve" {self.attributes()}{model}{markers} '
+            f'{indent}<path class="curve" {self.attributes()}{model}{markers}{pattern} '
             f'stroke-width="{_number(self.stroke_width)}" d="{self.path}"/>'
         ]
 

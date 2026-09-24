@@ -573,6 +573,8 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 arrow_width=max(
                     (head.width for head in (start_head, end_head) if head), default=10.0
                 ),
+                dash=trace.dash,
+                gap=trace.gap,
             )
         )
         notes.append(
@@ -585,6 +587,7 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 "analytic_residual_px": round(described.rms, 2) if described else None,
                 "within_tolerance": model is not None,
                 "arrowheads": int(start_head is not None) + int(end_head is not None),
+                "dashed": trace.dash > 0,
             }
         )
 

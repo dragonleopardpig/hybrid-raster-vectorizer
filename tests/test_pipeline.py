@@ -854,6 +854,57 @@ class TintTest(unittest.TestCase):
         self.assertGreater(int(inside.min()), 225, "the tint was taken for paper")
 
 
+class DashedCurveTest(unittest.TestCase):
+    """A straight broken line is found by the line its marks share; a bent one
+    has no such line and has to be followed."""
+
+    def _pieces(self, image):
+        from hybrid_vectorizer.components import extract
+
+        return extract(image)
+
+    def test_a_dashed_wave_is_followed_into_one_curve(self):
+        """The case these figures actually draw: a sine, shown dashed."""
+        from hybrid_vectorizer.tracing import follow_dashed_curves
+
+        image = np.zeros((400, 900), np.uint8)
+        xs = np.arange(40, 860)
+        ys = (200 + 120 * np.sin(xs / 90.0)).astype(int)
+        for start in range(0, xs.size - 26, 38):
+            for x, y in zip(xs[start : start + 26], ys[start : start + 26]):
+                cv2.circle(image, (int(x), int(y)), 3, 255, -1)
+        curves = follow_dashed_curves(self._pieces(image), 6.0, 30.0)
+        self.assertEqual(len(curves), 1)
+        self.assertGreaterEqual(len(curves[0].components), 15)
+        self.assertGreater(curves[0].dash, 0.0)
+        self.assertGreater(curves[0].gap, 0.0)
+
+    def test_marks_at_no_regular_spacing_are_not_a_curve(self):
+        from hybrid_vectorizer.tracing import follow_dashed_curves
+
+        image = np.zeros((400, 700), np.uint8)
+        for x, width in ((40, 30), (110, 18), (230, 34), (300, 22), (470, 28)):
+            cv2.line(image, (x, 200), (x + width, 205), 255, 5)
+        self.assertEqual(follow_dashed_curves(self._pieces(image), 6.0, 30.0), [])
+
+    def test_a_short_huddle_of_marks_is_not_a_curve(self):
+        """A legend's sample and its letters sit within a few dash lengths."""
+        from hybrid_vectorizer.tracing import follow_dashed_curves
+
+        image = np.zeros((400, 700), np.uint8)
+        for step in range(5):
+            cv2.line(image, (100 + step * 14, 200), (100 + step * 14 + 9, 205), 255, 5)
+        self.assertEqual(follow_dashed_curves(self._pieces(image), 6.0, 30.0), [])
+
+    def test_too_few_marks_are_not_a_curve(self):
+        from hybrid_vectorizer.tracing import follow_dashed_curves
+
+        image = np.zeros((400, 700), np.uint8)
+        for x in (40, 140, 240):
+            cv2.line(image, (x, 200), (x + 50, 200), 255, 5)
+        self.assertEqual(follow_dashed_curves(self._pieces(image), 6.0, 30.0), [])
+
+
 class FrameTest(unittest.TestCase):
     def _component(self, mask):
         from hybrid_vectorizer.components import Component
@@ -1175,6 +1226,7 @@ class NoRegressionTest(unittest.TestCase):
         self.assertEqual(analysis.frames, [])
         self.assertEqual(analysis.legends, [])
         self.assertEqual(analysis.dashed, [], "tick-label bars are not a broken line")
+        self.assertEqual([t for t in analysis.traces if t.dash > 0], [])
         self.assertTrue(all(b.orientation == "horizontal" for b in analysis.blocks))
         self.assertEqual(len(analysis.traces), 1, "the curve must stay a curve")
         self.assertEqual(len(analysis.blocks), 11)
