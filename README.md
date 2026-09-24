@@ -104,7 +104,12 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    what separates them from an equals sign or a leading minus. Each bar claims
    its own numerator and denominator, so adjacent tick labels cannot run
    together.
-11. **Reading** — labels are routed to Tesseract or, through a persistent worker,
+11. **Reading** — a reading that would have to be set several times the size of
+   everything else on the page is refused rather than drawn. Stray marks — a
+   tick, a dash, a speck — get grouped together and then read as *something*,
+   and on one scan that put large invented words like `sin aⁱ` across the
+   figure. What is refused is listed in the report. Otherwise labels are routed
+   to Tesseract or, through a persistent worker,
    to PP-FormulaNet. A confident prose reading wins; anything else is treated as
    mathematics. A turned label is read both ways up and the more legible answer
    kept. Confidence settles it where the two readings differ: the turned label
@@ -292,6 +297,7 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 | `--font FAMILY` | force a font family instead of matching one |
 | `--bezier-tolerance F` | curve fit tolerance as a fraction of the pen width (default 0.25) |
 | `--confidence F` | below this, a label is listed for review (default 0.55) |
+| `--largest-label F` | refuse a reading needing type more than F times the page's text height (default 3.5) |
 | `--raster-fallback` | embed original pixels for labels below that threshold |
 | `--background COLOR` | paint a solid page instead of leaving it transparent |
 | `--ensemble N` | read each formula N ways and report how often they agree |
@@ -308,8 +314,8 @@ should be.
 | figure | paper spread | blocks | note |
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
-| `waves1.png` | 0 | 44 | clean |
-| `thicklens_cascade.png` | 8 | 46 | 0.86 recall, 0.87 precision; four lens tints, both long broken lines |
+| `waves1.png` | 0 | 41 | 0.83 recall, 0.83 precision |
+| `thicklens_cascade.png` | 8 | 46 | 0.85 recall, 0.89 precision; four lens tints, both long broken lines |
 | `refraction.png` | 36 | 52 | 0.88 recall, 0.88 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 154 | heavy grain throughout; still the worst case |
 

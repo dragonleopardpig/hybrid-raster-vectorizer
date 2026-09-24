@@ -1182,6 +1182,53 @@ class ScannedFigureTest(unittest.TestCase):
         self.assertAlmostEqual(abs(angles[0] - angles[1]) % 180.0, 90.0, delta=8.0)
 
 
+@unittest.skipUnless((ROOT / "examples" / "waves1.png").exists(), "scan missing")
+class OutOfFamilyLabelTest(unittest.TestCase):
+    """Stray marks grouped together get read as something, and drawing the
+    answer put large invented words across this figure."""
+
+    @classmethod
+    def setUpClass(cls):
+        from hybrid_vectorizer.convert import Options, analyse
+
+        cls.page = ROOT / "examples" / "waves1.png"
+        cls.options = Options()
+        cls.blocks = len(analyse(cls.page, cls.options).blocks)
+
+    def _labelled(self, options):
+        """Read every block as a short word, so only the fit decides."""
+        from hybrid_vectorizer.convert import analyse, build_labels, choose_fonts
+        from hybrid_vectorizer.ocr import Reading
+
+        analysis = analyse(self.page, options)
+        for index in range(len(analysis.blocks)):
+            analysis.readings[index] = Reading("ab", "tesseract", 0.9)
+        fonts, _ranking = choose_fonts(analysis, options)
+        return analysis, build_labels(analysis, fonts, options)
+
+    def test_a_reading_needing_outsized_type_is_not_drawn(self):
+        analysis, labels = self._labelled(self.options)
+        self.assertTrue(analysis.rejected, "sparse scatters should be refused")
+        limit = self.options.largest_label * analysis.text_height
+        for entry in analysis.rejected:
+            self.assertGreater(entry["size_px"], limit)
+        self.assertTrue(labels, "real labels must survive")
+        self.assertLess(len(analysis.rejected), self.blocks, "not everything is refused")
+
+    def test_raising_the_limit_lets_them_through(self):
+        from hybrid_vectorizer.convert import Options
+
+        analysis, labels = self._labelled(Options(largest_label=1000.0))
+        self.assertEqual(analysis.rejected, [])
+        self.assertEqual(len(labels), self.blocks)
+
+    def test_what_is_refused_is_reported(self):
+        analysis, _labels = self._labelled(self.options)
+        entry = analysis.rejected[0]
+        self.assertEqual(sorted(entry), ["box", "reading", "size_px", "why"])
+        self.assertEqual(len(entry["box"]), 4)
+
+
 class OutputTest(unittest.TestCase):
     def _document(self, **kwargs):
         from hybrid_vectorizer import ir

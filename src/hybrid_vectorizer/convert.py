@@ -67,6 +67,7 @@ class Options:
     solve_alphabet: bool = False
     background: str | None = None
     ensemble: int = 1
+    largest_label: float = 3.5
     font_family: str | None = None
     font_candidates: int = 400
     use_formula_ocr: bool = True
@@ -88,6 +89,7 @@ class Analysis:
     legends: list = field(default_factory=list)
     dashed: list = field(default_factory=list)
     rotations: dict[int, float] = field(default_factory=dict)
+    rejected: list = field(default_factory=list)
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
     alternatives: dict[int, list[str]] = field(default_factory=dict)
@@ -368,6 +370,22 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         node = _measure_node(reading, block)
         along = float(_ink_extent(ink)[0] if angle is not None else block.width)
         size, score = _best_size(node, fonts, ink, along)
+
+        # A reading that has to be set six times the size of everything else on
+        # the page is not a line of text. These are stray marks -- a tick, a
+        # dash, a speck -- grouped together and then read as something, and
+        # drawing the answer puts large invented words across the figure.
+        if size > options.largest_label * analysis.text_height:
+            analysis.rejected.append(
+                {
+                    "box": [block.x, block.y, block.width, block.height],
+                    "reading": reading.text,
+                    "size_px": round(size, 1),
+                    "why": "type size out of family with the page",
+                }
+            )
+            continue
+
         prepared.append(
             Prepared(index=index, block=block, reading=reading, node=node, size=size, score=score)
         )
@@ -871,4 +889,5 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
         if element.confidence < options.confidence_threshold
     ]
     document.report["needs_review"] = low
+    document.report["not_labels"] = analysis.rejected
     return document

@@ -54,6 +54,7 @@ def _run_convert(args: argparse.Namespace) -> None:
         bezier_tolerance=args.bezier_tolerance,
         idealise=args.idealise,
         confidence_threshold=args.confidence,
+        largest_label=args.largest_label,
         raster_fallback=args.raster_fallback,
         substitute_glyphs=args.substitute_glyphs,
         solve_alphabet=args.solve_alphabet,
@@ -123,6 +124,11 @@ def _run_convert(args: argparse.Namespace) -> None:
         print(
             f"  agreement   recall {scores['recall']:.3f}  precision {scores['precision']:.3f} "
             f"(within {scores['tolerance_px']}px)"
+        )
+    for entry in summary.get("not_labels", []):
+        print(
+            f"  not a label  {entry['box']} would need {entry['size_px']:.0f}px type: "
+            f"{entry['reading'][:40]!r}"
         )
     if summary["needs_review"]:
         print(f"  review      {', '.join(summary['needs_review'])}")
@@ -246,6 +252,10 @@ def _parser() -> argparse.ArgumentParser:
     convert_parser.add_argument(
         "--ensemble", type=int, default=1, metavar="N",
         help="Read each formula N ways and report how often they agree (slower)",
+    )
+    convert_parser.add_argument(
+        "--largest-label", type=float, default=3.5, metavar="F",
+        help="Refuse a reading needing type more than F times the page's text height",
     )
     convert_parser.add_argument("--no-deskew", action="store_true")
     convert_parser.add_argument("--no-formula-ocr", action="store_true")
