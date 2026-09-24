@@ -19,12 +19,17 @@ class DashedLine:
     dash: float
     gap: float
     stroke_width: float
+    stretches: list[tuple[tuple[float, float], tuple[float, float]]] = field(default_factory=list)
     components: list[Component] = field(default_factory=list, repr=False)
 
     @property
     def length(self) -> float:
         return float(np.hypot(self.end[0] - self.start[0], self.end[1] - self.start[1]))
 
+    @property
+    def drawn(self) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+        """The stretches of the line a mark was actually found along."""
+        return self.stretches or [(self.start, self.end)]
 
 def _rect(component: Component) -> tuple[float, float, np.ndarray, np.ndarray]:
     """Centre, axis, length and breadth of the smallest rectangle around a mark."""
@@ -66,6 +71,14 @@ def _hemmed_in(centre: np.ndarray, axis: np.ndarray, length: float, ink: np.ndar
     A fraction bar is short, straight, thin and collinear with the next label's
     bar, and passes every test a dash does. What it has that a dash has not is a
     numerator above it and a denominator below.
+
+    The reach is a share of the mark's own length, so on a short mark the nearest
+    probes fall inside the pen that drew it and the mark answers for itself on
+    both sides. That discards the dot of every dash-dot line in a busy figure,
+    which is why none of them is read as a line. Excluding the mark's own ink
+    does recover those dots, and measurably costs more than it returns: the
+    grouper cannot use them, and every arrangement of it tried traded about a
+    point of recall on four figures for a point of precision.
     """
     height, width = ink.shape
     normal = np.array([-axis[1], axis[0]])
@@ -108,6 +121,11 @@ def _period(steps: np.ndarray) -> tuple[float, float]:
     double-length gap. Judged on the spread of raw steps that reads as
     irregular; judged as multiples of one repeat it is exactly as regular as the
     rest of the line.
+
+    The error is measured against the candidate, so a period several times too
+    short fits any step at all and scores better than the truth. Nothing here can
+    tell the two apart, because both are regular; `_runs` settles it instead, by
+    drawing only the stretches a mark was really found along.
     """
     if steps.size == 0:
         return 0.0, np.inf
@@ -123,11 +141,34 @@ def _period(steps: np.ndarray) -> tuple[float, float]:
     return best
 
 
+def _runs(marks: list[_Mark], steps: np.ndarray, period: float) -> list[list[_Mark]]:
+    """Split a line at the places where its marks stop, keeping the stretches.
+
+    The period is allowed to span a gap, so that a line losing a dash behind
+    something else still reads as one line. Drawing it as one line then invents a
+    dash in every gap it was allowed. Judge the line over the whole of it; draw
+    only where its marks are.
+    """
+    runs: list[list[_Mark]] = []
+    current = [marks[0]]
+    for mark, step in zip(marks[1:], steps):
+        if step > 1.5 * period:
+            runs.append(current)
+            current = [mark]
+        else:
+            current.append(mark)
+    runs.append(current)
+    return runs
+
+
 def _breadth(mark: _Mark) -> float:
     return max(_rect(mark.component)[3], 1.0)
 
 
-def _alike(mark: _Mark, anchor: _Mark, lengths: tuple[float, float], breadths: tuple[float, float]) -> bool:
+def _alike(
+    mark: _Mark, anchor: _Mark, lengths: tuple[float, float], breadths: tuple[float, float]
+) -> bool:
+    """The same mark as the anchor, near enough to be the next one along."""
     ratio = mark.length / max(anchor.length, 1e-6)
     if not (lengths[0] <= ratio <= lengths[1]):
         return False
@@ -210,22 +251,36 @@ def find_dashed_lines(
         if period <= 0 or residual > regularity:
             continue
 
-        lengths = np.array([mark.length for mark in remaining])
-        dash = float(np.median(lengths))
+        dash = float(np.median([mark.length for mark in remaining]))
         gap = float(max(1.0, period - dash))
-        if gap > widest_gap * dash:
+        if gap > widest_gap * max(dash, 1.0):
             continue
+        pen = float(np.median([_breadth(mark) for mark in remaining]))
         axis = remaining[0].axis
-        half = 0.5 * dash * axis
-        first, last = centres[0] - half, centres[-1] + half
+
+        # The line still runs from end to end, half a dash beyond the outermost
+        # centre as it always has. What is new is that the stretches inside it
+        # stop at the marks, so nothing is drawn across a hole.
+        runs = _runs(remaining, steps, period)
+        stretches = []
+        for index, run in enumerate(runs):
+            here = np.array([mark.centre for mark in run])
+            opening = 0.5 * (dash if index == 0 else run[0].length)
+            closing = 0.5 * (dash if index == len(runs) - 1 else run[-1].length)
+            first = here[0] - opening * axis
+            last = here[-1] + closing * axis
+            stretches.append(
+                ((float(first[0]), float(first[1])), (float(last[0]), float(last[1])))
+            )
 
         lines.append(
             DashedLine(
-                start=(float(first[0]), float(first[1])),
-                end=(float(last[0]), float(last[1])),
+                start=stretches[0][0],
+                end=stretches[-1][1],
                 dash=dash,
                 gap=gap,
-                stroke_width=float(np.median([_breadth(mark) for mark in remaining])),
+                stroke_width=pen,
+                stretches=stretches,
                 components=[mark.component for mark in remaining],
             )
         )

@@ -285,13 +285,31 @@ class Dashed(Element):
     dash: float = 1.0
     gap: float = 1.0
     marks: int = 0
+    stretches: list[tuple[tuple[float, float], tuple[float, float]]] = field(
+        default_factory=list
+    )
 
     def to_svg(self, indent: str) -> list[str]:
+        drawn = self.stretches or [((self.x1, self.y1), (self.x2, self.y2))]
+        if len(drawn) == 1:
+            (x1, y1), (x2, y2) = drawn[0]
+            return [
+                f'{indent}<line class="dashed" {self.attributes()} data-marks="{self.marks}" '
+                f'x1="{_number(x1)}" y1="{_number(y1)}" '
+                f'x2="{_number(x2)}" y2="{_number(y2)}" '
+                f'stroke-width="{_number(self.stroke_width)}" '
+                f'stroke-dasharray="{_number(self.dash)} {_number(self.gap)}"/>'
+            ]
+        # One line, drawn in the stretches its marks were found along: a subpath
+        # apiece, so nothing is invented across the gap where it passes behind
+        # something else. The pattern restarts at each subpath, as a pen would.
+        path = " ".join(
+            f"M{_number(x1)} {_number(y1)} L{_number(x2)} {_number(y2)}"
+            for (x1, y1), (x2, y2) in drawn
+        )
         return [
-            f'{indent}<line class="dashed" {self.attributes()} data-marks="{self.marks}" '
-            f'x1="{_number(self.x1)}" y1="{_number(self.y1)}" '
-            f'x2="{_number(self.x2)}" y2="{_number(self.y2)}" '
-            f'stroke-width="{_number(self.stroke_width)}" '
+            f'{indent}<path class="dashed" {self.attributes()} data-marks="{self.marks}" '
+            f'd="{path}" stroke-width="{_number(self.stroke_width)}" '
             f'stroke-dasharray="{_number(self.dash)} {_number(self.gap)}"/>'
         ]
 

@@ -751,6 +751,33 @@ class DashedLineTest(unittest.TestCase):
         self.assertEqual(len(lines[0].components), 7)
         self.assertAlmostEqual(lines[0].gap, 14.0, delta=6.0)
 
+    def test_the_line_is_not_drawn_across_the_dash_it_lost(self):
+        """One line, in the two stretches its marks were found along."""
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x in (40, 84, 128, 216, 260, 304, 348):   # 172 is missing
+            cv2.line(image, (x, 150), (x + 30, 150), 255, 4)
+        line = find_dashed_lines(self._marks(image), 4.0, (600, 300))[0][0]
+
+        self.assertEqual(len(line.drawn), 2)
+        (_first, left), (right, _last) = line.drawn
+        self.assertLess(left[0], 172)
+        self.assertGreater(right[0], 202)
+        self.assertAlmostEqual(line.start[0], line.drawn[0][0][0])
+        self.assertAlmostEqual(line.end[0], line.drawn[-1][1][0])
+
+    def test_an_unbroken_line_is_drawn_as_one_stretch(self):
+        """Nothing is split that has no hole in it."""
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x in range(40, 400, 44):
+            cv2.line(image, (x, 150), (x + 30, 150), 255, 4)
+        line = find_dashed_lines(self._marks(image), 4.0, (600, 300))[0][0]
+        self.assertEqual(len(line.drawn), 1)
+        self.assertEqual(line.drawn[0], (line.start, line.end))
+
     def test_a_mark_with_ink_above_and_below_is_not_a_dash(self):
         """Fraction bars are collinear and evenly spaced; what they have is
         a numerator over them and a denominator under."""

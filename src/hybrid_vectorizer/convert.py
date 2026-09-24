@@ -637,6 +637,7 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 dash=line.dash,
                 gap=line.gap,
                 marks=len(line.components),
+                stretches=list(line.drawn),
             )
         )
 
@@ -820,6 +821,7 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
                 "dash_px": round(line.dash, 1),
                 "gap_px": round(line.gap, 1),
                 "marks": len(line.components),
+                "stretches": len(line.drawn),
             }
             for line in analysis.dashed
         ],

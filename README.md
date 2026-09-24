@@ -327,9 +327,23 @@ should be.
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
 | `waves1.png` | 0 | 33 | 0.90 recall, 0.87 precision; its dashed waves followed as curves |
-| `thicklens_cascade.png` | 8 | 39 | 0.90 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.84 recall, 0.89 precision; the shaded slab read as a 12% tint |
+| `thicklens_cascade.png` | 8 | 39 | 0.90 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
+| `refraction.png` | 36 | 46 | 0.82 recall, 0.89 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 82 | 0.80 recall, 0.93 precision; heavy grain throughout |
+
+A broken line is allowed to lose a dash or two behind whatever it passes, so
+that it still reads as one line rather than as two. It used then to be drawn as
+one line from end to end, which put a dash back in every hole the period test
+had forgiven. It is now drawn in the stretches its marks were really found
+along: one line still, reported and measured as one line, written as one path
+with a subpath apiece. That is worth about a point of precision across the
+scans, most of it on `waves1.png`, which went from 0.858 to 0.881.
+
+It costs `refraction.png` about two points of recall, and that reading is the
+honest one. Seven of its holes are not holes. They are the dots of its dash-dot
+normals, which the fraction-bar guard throws away, and drawing straight through
+them was covering ink the converter had never recognised — the same way a false
+ruling once read as 0.91 recall on the worn scan.
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
 ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
@@ -366,8 +380,19 @@ shapes they actually are, which is the trade the whole project makes.
   the label, and splitting at the emptiest column does not help, because a
   hollow sample's own interior is emptier than the gap beside it. The row is
   recorded with its name and no sample rather than dropped.
-- Dash-dot and other mixed patterns: the period test expects one dash length,
-  so a line that alternates long and short is not recognised as one line.
+- Dash-dot and other mixed patterns. `refraction.png` draws four construction
+  normals this way and loses all four, which is 28.8% of everything that figure
+  fails to reproduce. The cause is not the period test but the fraction-bar
+  guard: it asks whether there is ink on both sides of a mark, across the mark's
+  own direction, at a quarter of the mark's own length. On a dot that distance
+  is shorter than the pen that drew it, so the probe window lands on the mark
+  itself and every dot answers yes and is discarded. The long dashes survive
+  alone, too irregular to read as a line. Excluding the mark's own ink does
+  recover the dots, and measurably does not pay: the dots destabilise the
+  grouping, `thicklens_cascade.png` loses one of its two long broken lines
+  outright, and every arrangement tried traded about a point of recall across
+  four figures for a point of precision. Recovering them needs a grouper that
+  can carry two mark lengths at once, not a wider gate.
 - A symbol the recogniser names but this renderer has no glyph for. It draws
   nothing rather than setting the command's own name as a word, which is how
   `twoheadrightarrow` came to be written across a figure in place of an arrow.
