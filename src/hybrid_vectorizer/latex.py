@@ -27,7 +27,23 @@ SYMBOLS: dict[str, str] = {
     "rightarrow": "→", "to": "→", "leftarrow": "←",
     "Rightarrow": "⇒", "ldots": "…", "cdots": "⋯", "dots": "…",
     "prime": "′", "circ": "∘", "degree": "°", "angle": "∠",
-    "perp": "⊥", "parallel": "∥", "in": "∈", "hbar": "ℏ",
+    "perp": "⊥", "parallel": "∥", "in": "∈", "hbar": "ℏ",    # Arrows: a recogniser offers one whenever a figure draws a line with
+    # a head on it, which technical figures do constantly. Everything below
+    # was coming back as its own command name and being set as a word.
+    "uparrow": "↑", "downarrow": "↓", "updownarrow": "↕", "leftrightarrow": "↔",
+    "longrightarrow": "⟶", "longleftarrow": "⟵", "longleftrightarrow": "⟷",
+    "Leftarrow": "⇐", "Leftrightarrow": "⇔", "twoheadrightarrow": "↠",
+    "twoheadleftarrow": "↞", "rightarrowtail": "↣", "leftarrowtail": "↢",
+    "hookrightarrow": "↪", "hookleftarrow": "↩", "mapsto": "↦", "rightsquigarrow": "⇝",
+    "nearrow": "↗", "searrow": "↘", "swarrow": "↙", "nwarrow": "↖", "rightharpoonup": "⇀",
+    "leftharpoonup": "↼", "diagup": "╱", "diagdown": "╲", "forall": "∀", "exists": "∃",
+    "nexists": "∄", "neg": "¬", "land": "∧", "lor": "∨", "cup": "∪", "cap": "∩",
+    "subset": "⊂", "supset": "⊃", "subseteq": "⊆", "supseteq": "⊇", "notin": "∉",
+    "emptyset": "∅", "varnothing": "∅", "therefore": "∴", "because": "∵", "simeq": "≃",
+    "cong": "≅", "ll": "≪", "gg": "≫", "oplus": "⊕", "otimes": "⊗", "odot": "⊙",
+    "star": "⋆", "bullet": "∙", "dagger": "†", "surd": "√", "top": "⊤", "bot": "⊥",
+    "triangle": "△", "square": "□", "blacksquare": "■", "blacktriangle": "▲",
+    "circleddash": "⊝", "aleph": "ℵ", "wp": "℘", "ell": "ℓ", "imath": "ı", "jmath": "ȷ",
 }
 
 UPRIGHT_WORDS = {
@@ -95,6 +111,7 @@ class _Parser:
     def __init__(self, tokens: list[str]) -> None:
         self.tokens = tokens
         self.index = 0
+        self.unknown: list[str] = []
 
     def peek(self) -> str | None:
         return self.tokens[self.index] if self.index < len(self.tokens) else None
@@ -172,7 +189,11 @@ class _Parser:
         # keep what it wraps rather than printing the command's own name.
         if self.peek() == "{":
             return self.parse_atom() or Row([])
-        return Run(name, upright=True)
+        # A bare command we do not know is a symbol we cannot draw. Setting its
+        # name as a word puts "twoheadrightarrow" across the figure in place of
+        # an arrow, which is worse than leaving the mark unexplained.
+        self.unknown.append(name)
+        return None
 
 
 def _set_upright(node: object) -> None:
@@ -183,8 +204,11 @@ def _set_upright(node: object) -> None:
             _set_upright(item)
 
 
-def parse(source: str) -> Row:
-    node = _Parser(_tokenise(source)).parse_row()
+def parse(source: str, *, unknown: list[str] | None = None) -> Row:
+    parser = _Parser(_tokenise(source))
+    node = parser.parse_row()
+    if unknown is not None:
+        unknown.extend(parser.unknown)
     return node
 
 

@@ -10,7 +10,7 @@ from skimage.morphology import skeletonize
 
 from .components import Component, extract
 from .preprocess import Page
-from .primitives import Rule, TickSet
+from .primitives import Arrow, Rule, TickSet
 
 
 @dataclass
@@ -81,32 +81,54 @@ def is_graphic(component: Component, text_height: float, stroke_width: float) ->
 _NODE_KERNEL = np.ones((3, 3), np.float32)
 
 
-def skeleton_nodes(mask: np.ndarray) -> tuple[int, int]:
-    """Count where the medial axis ends and where it branches."""
+def skeleton_nodes(mask: np.ndarray, *, middle: float = 0.0) -> tuple[int, int]:
+    """Count where the medial axis ends and where it branches.
+
+    With ``middle`` set, only the central share of the shape is counted, along
+    its own long axis. An arrow branches at its heads and nowhere else, while a
+    word branches all the way along, so ignoring the ends tells them apart.
+    """
     spine = skeletonize(mask > 0).astype(np.float32)
     if not spine.any():
         return 0, 0
     counted = cv2.filter2D(spine, cv2.CV_32F, _NODE_KERNEL, borderType=cv2.BORDER_CONSTANT)
     neighbours = np.rint(counted - spine).astype(np.int32)
     live = spine > 0
+
+    if middle > 0.0:
+        ys, xs = np.nonzero(live)
+        if xs.size == 0:
+            return 0, 0
+        points = np.column_stack([xs, ys]).astype(float)
+        centred = points - points.mean(axis=0)
+        _u, _spread, axes = np.linalg.svd(centred, full_matrices=False)
+        along = centred @ axes[0]
+        reach = float(np.max(np.abs(along))) or 1.0
+        keep = np.abs(along) <= middle * reach
+        inner = np.zeros_like(live)
+        inner[ys[keep], xs[keep]] = True
+        live = live & inner
+
     ends = int(np.count_nonzero(live & (neighbours == 1)))
     junctions = int(np.count_nonzero(live & (neighbours >= 3)))
     return ends, junctions
 
 
 def looks_like_text(
-    component: Component, text_height: float, *, minimum_nodes: int = 6, tallest: float = 2.5
+    component: Component, text_height: float, *, minimum_nodes: int = 12, tallest: float = 2.5
 ) -> bool:
     """Distinguish a word whose letters touch from a line that was drawn.
 
     In heavy type a whole word can arrive as one component, wide enough to pass
     for a curve, and then it is traced as a squiggle and never read at all. A
-    drawn line has two ends and no branches however long it is; a word of nine
-    letters has dozens of both.
+    word branches all the way along; a line does not, and the branches an
+    arrowhead or a ragged scan add are at the ends or few. Counted over the
+    middle only, words on these figures score 18 and 49 while dimension arrows
+    score 6 to 9.
     """
     if component.height > tallest * text_height:
         return False
-    ends, junctions = skeleton_nodes(component.mask)
+    ends, junctions = skeleton_nodes(component.mask, middle=0.6)
     return ends + junctions >= minimum_nodes
 
 
@@ -187,6 +209,64 @@ def _trace_skeleton(mask: np.ndarray, origin: tuple[int, int]) -> np.ndarray | N
 
     x_offset, y_offset = origin
     return np.array([[x + x_offset, y + y_offset] for y, x in path], dtype=float)
+
+
+def _across(ink: np.ndarray, point: np.ndarray, normal: np.ndarray, limit: int) -> int:
+    """Width of the ink through a point, measured across the given direction."""
+    height, width = ink.shape
+    span = 0
+    for sign in (-1.0, 1.0):
+        for step in range(1, limit + 1):
+            probe = point + sign * step * normal
+            x, y = int(round(probe[0])), int(round(probe[1]))
+            if not (0 <= x < width and 0 <= y < height) or ink[y, x] == 0:
+                break
+            span += 1
+    x, y = int(round(point[0])), int(round(point[1]))
+    if 0 <= x < width and 0 <= y < height and ink[y, x] > 0:
+        span += 1
+    return span
+
+
+def arrowheads_on(
+    points: np.ndarray, ink: np.ndarray, stroke_width: float, *, look: int = 40
+) -> tuple[Arrow | None, Arrow | None]:
+    """Find a solid head at either end of a traced stroke.
+
+    Only the long straight rules of a plot were checked for one, so the heads on
+    a dimension line -- which is short, and often at an angle -- were traced
+    through as if they were part of the line and then not drawn.
+    """
+    from .primitives import _find_arrow
+
+    if points.shape[0] < 6:
+        return None, None
+
+    limit = max(6, int(6 * stroke_width))
+    found: list[Arrow | None] = []
+    for at_end in (False, True):
+        ordered = points[::-1] if at_end else points
+        step = min(look, ordered.shape[0] - 1)
+        direction = ordered[step] - ordered[0]
+        length = float(np.linalg.norm(direction))
+        if length < 1e-6:
+            found.append(None)
+            continue
+        direction = direction / length
+        normal = np.array([-direction[1], direction[0]])
+
+        profile = np.array(
+            [_across(ink, ordered[i], normal, limit) for i in range(step + 1)],
+            dtype=np.int32,
+        )
+        # The stroke's own pen width is the body to compare against. Taking it
+        # from the sampled window instead measures the head, which is most of
+        # what that window covers, and then nothing can flare above it.
+        arrow = _find_arrow(profile, stroke_width, at_end=False, search=step + 1)
+        if arrow is not None:
+            arrow.at_end = at_end
+        found.append(arrow)
+    return found[0], found[1]
 
 
 def component_stroke_width(component: Component) -> float:

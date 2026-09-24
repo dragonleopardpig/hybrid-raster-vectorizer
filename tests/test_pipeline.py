@@ -368,8 +368,23 @@ class LatexTest(unittest.TestCase):
         """Rendering the command's own name put 'boldsymbol' into a figure."""
         self.assertEqual(tex.to_text(tex.parse(r"\unknowncmd{q}+x")), "q+x")
 
-    def test_a_bare_unknown_command_still_shows(self):
-        self.assertEqual(tex.to_text(tex.parse(r"\weird")), "weird")
+    def test_a_bare_unknown_command_draws_nothing_and_says_so(self):
+        """Setting its name as a word put 'twoheadrightarrow' across a figure."""
+        seen = []
+        self.assertEqual(tex.to_text(tex.parse(r"\weird", unknown=seen)), "")
+        self.assertEqual(seen, ["weird"])
+
+    def test_the_symbols_a_recogniser_offers_for_arrows_are_drawn(self):
+        for source, drawn in (
+            (r"\twoheadrightarrow", "\u21a0"),
+            (r"\nwarrow", "\u2196"),
+            (r"\longrightarrow", "\u27f6"),
+            (r"\therefore", "\u2234"),
+            (r"\forall", "\u2200"),
+        ):
+            seen = []
+            self.assertEqual(tex.to_text(tex.parse(source, unknown=seen)), drawn)
+            self.assertEqual(seen, [], source)
 
     def test_upright_and_italic_runs_are_separated(self):
         from hybrid_vectorizer.fonts import Metrics
@@ -618,6 +633,26 @@ class WordVersusLineTest(unittest.TestCase):
         self.assertGreaterEqual(ends + junctions, 10)
 
     def test_a_touching_word_is_not_taken_for_a_curve(self):
+        from hybrid_vectorizer.tracing import looks_like_text
+
+        mask = np.zeros((44, 300), np.uint8)
+        cv2.putText(mask, "Imaginary", (6, 34), cv2.FONT_HERSHEY_SIMPLEX, 1.1, 255, 6)
+        self.assertTrue(looks_like_text(self._component(mask), 26.0))
+
+    def test_an_arrow_branches_only_at_its_heads(self):
+        """A dimension arrow was being read as a word and drawn as one."""
+        from hybrid_vectorizer.tracing import looks_like_text, skeleton_nodes
+
+        mask = np.zeros((40, 200), np.uint8)
+        cv2.line(mask, (20, 20), (180, 20), 255, 4)
+        cv2.fillPoly(mask, [np.array([[20, 20], [44, 8], [44, 32]])], 255)
+        cv2.fillPoly(mask, [np.array([[180, 20], [156, 8], [156, 32]])], 255)
+        whole = sum(skeleton_nodes(mask))
+        middle = sum(skeleton_nodes(mask, middle=0.6))
+        self.assertLess(middle, whole, "the heads are at the ends")
+        self.assertFalse(looks_like_text(self._component(mask), 16.0))
+
+    def test_a_word_branches_all_the_way_along(self):
         from hybrid_vectorizer.tracing import looks_like_text
 
         mask = np.zeros((44, 300), np.uint8)
@@ -1113,6 +1148,14 @@ class LensCascadeTest(unittest.TestCase):
         self.assertGreaterEqual(len(long_ones), 2)
         for line in long_ones:
             self.assertGreaterEqual(len(line.components), 8)
+
+    def test_its_dimension_arrows_are_drawn_not_read(self):
+        """Each was a block holding an arrow and its label, read as a symbol."""
+        row = [
+            trace for trace in self.analysis.traces
+            if 540 < trace.points[:, 1].mean() < 600 and 500 < trace.points[:, 0].mean() < 1200
+        ]
+        self.assertGreaterEqual(len(row), 4)
 
     def test_the_shaded_lens_elements_are_tints(self):
         tints = [region for region in self.analysis.regions if region.kind == "tint"]

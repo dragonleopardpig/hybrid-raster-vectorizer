@@ -52,7 +52,7 @@ from .shapes import (
     region_path,
 )
 from .textlayout import Block, group_blocks, text_angle
-from .tracing import Trace, partition
+from .tracing import Trace, arrowheads_on, partition
 
 
 @dataclass
@@ -554,6 +554,7 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
 
         segments = fit_bezier(source, options.bezier_tolerance * trace.stroke_width)
         described = model or loose
+        start_head, end_head = arrowheads_on(points, page.ink, trace.stroke_width)
         elements.append(
             ir.Curve(
                 kind="curve",
@@ -564,6 +565,14 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 stroke_width=trace.stroke_width,
                 model=described.description if described else "",
                 model_rms=described.rms if described else None,
+                arrow_start=start_head is not None,
+                arrow_end=end_head is not None,
+                arrow_length=max(
+                    (head.length for head in (start_head, end_head) if head), default=12.0
+                ),
+                arrow_width=max(
+                    (head.width for head in (start_head, end_head) if head), default=10.0
+                ),
             )
         )
         notes.append(
@@ -575,6 +584,7 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 "analytic_model": described.name if described else None,
                 "analytic_residual_px": round(described.rms, 2) if described else None,
                 "within_tolerance": model is not None,
+                "arrowheads": int(start_head is not None) + int(end_head is not None),
             }
         )
 

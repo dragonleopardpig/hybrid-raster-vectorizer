@@ -100,6 +100,39 @@ class Curve(Element):
     stroke_width: float = 1.0
     model: str = ""
     model_rms: float | None = None
+    arrow_start: bool = False
+    arrow_end: bool = False
+    arrow_length: float = 12.0
+    arrow_width: float = 10.0
+
+    @property
+    def head(self) -> str:
+        return f"head-{self.identifier}"
+
+    def defs(self) -> list[str]:
+        """Its own head, sized as drawn: a dimension arrow is not an axis arrow."""
+        if not (self.arrow_start or self.arrow_end):
+            return []
+        size = (
+            f'markerWidth="{_number(self.arrow_length)}" '
+            f'markerHeight="{_number(self.arrow_width)}"'
+        )
+        lines = []
+        if self.arrow_end:
+            lines += [
+                f'    <marker id="{_attribute(self.head)}-end" viewBox="0 0 12 12" refX="11" refY="6"',
+                f'            {size} markerUnits="userSpaceOnUse" orient="auto">',
+                '      <path d="M0 0 L12 6 L0 12 Z" fill="currentColor"/>',
+                "    </marker>",
+            ]
+        if self.arrow_start:
+            lines += [
+                f'    <marker id="{_attribute(self.head)}-start" viewBox="0 0 12 12" refX="1" refY="6"',
+                f'            {size} markerUnits="userSpaceOnUse" orient="auto">',
+                '      <path d="M12 0 L0 6 L12 12 Z" fill="currentColor"/>',
+                "    </marker>",
+            ]
+        return lines
 
     def to_svg(self, indent: str) -> list[str]:
         model = ""
@@ -107,8 +140,13 @@ class Curve(Element):
             model = f' data-model="{_attribute(self.model)}"'
             if self.model_rms is not None:
                 model += f' data-model-residual="{self.model_rms:.2f}"'
+        markers = ""
+        if self.arrow_end:
+            markers += f' marker-end="url(#{_attribute(self.head)}-end)"'
+        if self.arrow_start:
+            markers += f' marker-start="url(#{_attribute(self.head)}-start)"'
         return [
-            f'{indent}<path class="curve" {self.attributes()}{model} '
+            f'{indent}<path class="curve" {self.attributes()}{model}{markers} '
             f'stroke-width="{_number(self.stroke_width)}" d="{self.path}"/>'
         ]
 
@@ -394,7 +432,8 @@ class Document:
             f"      svg {{ color: {_attribute(self.dark_ink)}; }}",
             "      .unverified { filter: invert(1); }",
             "    }",
-            "    .curve { fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }",
+            "    .curve { fill: none; stroke: currentColor; color: currentColor;"
+            " stroke-linecap: round; stroke-linejoin: round; }",
             "    .axis { stroke: currentColor; stroke-linecap: butt; }",
             "    .tick { stroke: currentColor; stroke-linecap: butt; }",
             "    .fraction-line { stroke: currentColor; fill: none; stroke-linecap: butt; }",

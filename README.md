@@ -78,10 +78,12 @@ and every decision it makes is recorded in a JSON report beside the SVG.
 8. **Curves** — axes, arrowheads and ticks are erased, and what remains is
    traced along its centreline, per column where the stroke is a function of x
    and along the medial axis otherwise. Strokes that an erased axis cut apart
-   are rejoined. Before any of that, a component wide enough to pass for a
-   curve is checked for branching: in heavy type a whole word arrives as one
-   component, and a drawn line has two ends and no branches however long it is,
-   while a word of nine letters has dozens of both.
+   are rejoined, and either end is checked for a solid head. Before any of
+   that, a component wide enough to pass for a curve is checked for branching:
+   in heavy type a whole word arrives as one component. A word branches all the
+   way along; a line does not, and what branches an arrowhead or a ragged scan
+   adds is at the ends. Counted over the middle only, words on these figures
+   score 18 and 49 against 6 to 9 for a dimension arrow.
 9. **Fitting** — the trace is matched against straight lines, polynomials and
    sinusoids (period by spectrum, then a bracketed minimisation), and fitted
    with cubic Béziers by Schneider's algorithm to a tolerance set as a fraction
@@ -315,8 +317,8 @@ should be.
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
 | `waves1.png` | 0 | 41 | 0.83 recall, 0.83 precision |
-| `thicklens_cascade.png` | 8 | 46 | 0.85 recall, 0.89 precision; four lens tints, both long broken lines |
-| `refraction.png` | 36 | 52 | 0.88 recall, 0.88 precision; the shaded slab read as a 12% tint |
+| `thicklens_cascade.png` | 8 | 42 | 0.89 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
+| `refraction.png` | 36 | 46 | 0.88 recall, 0.88 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 154 | heavy grain throughout; still the worst case |
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
@@ -351,6 +353,9 @@ shapes they actually are, which is the trade the whole project makes.
 - Dash-dot and other mixed patterns: the period test expects one dash length,
   so a line that alternates long and short is not recognised as one line.
 - Curved broken lines: the marks are matched along a straight run.
+- A symbol the recogniser names but this renderer has no glyph for. It draws
+  nothing rather than setting the command's own name as a word, which is how
+  `twoheadrightarrow` came to be written across a figure in place of an arrow.
 - Text on a curve, and text whose marks do not lie on a straight line.
 - A tinted area that is not outlined. Being outlined is what tells a printed
   tint from a stain on the scan, so an unbounded one is left alone rather than
