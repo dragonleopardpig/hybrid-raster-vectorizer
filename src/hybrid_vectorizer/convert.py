@@ -98,7 +98,7 @@ class Analysis:
 def analyse(path: Path, options: Options) -> Analysis:
     page = load_page(path, deskew=options.deskew)
     components = extract(page.ink)
-    text_height = median_text_height(components, page.height)
+    text_height = median_text_height(components, page.height, page.stroke_width)
 
     regions, working = detect_regions(page.ink, page.stroke_width, page.gray)
     rules = detect_rules(page, ink=working)

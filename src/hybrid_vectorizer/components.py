@@ -132,13 +132,28 @@ def split_into(
     return (result or [component]), clean
 
 
-def median_text_height(components: list[Component], page_height: int) -> float:
-    """Typical glyph height, taken from components small enough to be glyphs."""
+def median_text_height(
+    components: list[Component], page_height: int, stroke_width: float = 0.0
+) -> float:
+    """Typical glyph height, taken from components that could be glyphs.
+
+    On a worn scan the grain outnumbers the type, and a plain median of every
+    small component measures the dirt: one figure here reported 7px where its
+    words are 27. A printed character carries at least a couple of pen widths
+    squared of ink, and grain does not, so the estimate is taken from those.
+    """
+    floor = max(8.0, 2.0 * stroke_width * stroke_width)
     candidates = [
         float(component.height)
         for component in components
-        if component.height < 0.25 * page_height and component.area > 8
+        if component.height < 0.25 * page_height and component.area >= floor
     ]
+    if not candidates:
+        candidates = [
+            float(component.height)
+            for component in components
+            if component.height < 0.25 * page_height and component.area > 8
+        ]
     if not candidates:
         return max(8.0, 0.02 * page_height)
     return float(np.median(candidates))

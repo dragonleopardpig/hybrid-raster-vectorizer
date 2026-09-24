@@ -327,9 +327,9 @@ should be.
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
 | `waves1.png` | 0 | 33 | 0.90 recall, 0.87 precision; its dashed waves followed as curves |
-| `thicklens_cascade.png` | 8 | 40 | 0.90 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
+| `thicklens_cascade.png` | 8 | 39 | 0.90 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
 | `refraction.png` | 36 | 46 | 0.84 recall, 0.89 precision; the shaded slab read as a 12% tint |
-| `wavefront.png` | 60 | 130 | 0.77 recall, 0.94 precision; heavy grain throughout |
+| `wavefront.png` | 60 | 82 | 0.80 recall, 0.93 precision; heavy grain throughout |
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
 ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut

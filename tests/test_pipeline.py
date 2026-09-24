@@ -1450,6 +1450,45 @@ class EnsembleTest(unittest.TestCase):
         self.assertEqual(len(augmentations(image, 1)), 1)
 
 
+class TextHeightTest(unittest.TestCase):
+    """On a worn scan the grain outnumbers the type, and every threshold in the
+    pipeline is a multiple of the text height."""
+
+    def _page(self, with_grain):
+        page = np.zeros((600, 900), np.uint8)
+        for row in (100, 200, 300):
+            cv2.putText(page, "wavefront", (60, row), cv2.FONT_HERSHEY_SIMPLEX, 1.0, 255, 4)
+        if with_grain:
+            rng = np.random.default_rng(2)
+            for x, y in rng.integers([0, 0], [900, 600], size=(4000, 2)):
+                page[y : y + 2, x : x + 2] = 255
+        return page
+
+    def test_grain_does_not_set_the_text_height(self):
+        from hybrid_vectorizer.components import extract, median_text_height
+
+        clean = median_text_height(extract(self._page(False)), 600, 5.0)
+        grainy = median_text_height(extract(self._page(True)), 600, 5.0)
+        self.assertAlmostEqual(grainy, clean, delta=4.0)
+
+    def test_without_the_pen_width_the_grain_wins(self):
+        """Which is what it did: 7px measured where the words are 27."""
+        from hybrid_vectorizer.components import extract, median_text_height
+
+        components = extract(self._page(True))
+        self.assertLess(median_text_height(components, 600), 10.0)
+        self.assertGreater(median_text_height(components, 600, 5.0), 15.0)
+
+    def test_a_page_of_only_grain_still_answers(self):
+        from hybrid_vectorizer.components import extract, median_text_height
+
+        page = np.zeros((400, 400), np.uint8)
+        rng = np.random.default_rng(3)
+        for x, y in rng.integers([0, 0], [400, 400], size=(500, 2)):
+            page[y : y + 2, x : x + 2] = 255
+        self.assertGreater(median_text_height(extract(page), 400, 9.0), 0.0)
+
+
 class PaperTest(unittest.TestCase):
     def test_a_filled_area_survives_flattening(self):
         """The paper estimate must carry across ink, not treat it as shading."""
