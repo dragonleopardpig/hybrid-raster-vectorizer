@@ -570,6 +570,32 @@ class ShapeTest(unittest.TestCase):
         self.assertAlmostEqual(hatch.angle, 45.0, delta=4.0)
         self.assertAlmostEqual(hatch.spacing, 16.0 / (2 ** 0.5), delta=2.0)
 
+    def test_a_scatter_lying_at_one_angle_is_not_ruling(self):
+        """Marks that merely share a direction cover a tenth of what ruling does."""
+        from hybrid_vectorizer.shapes import detect_hatch
+
+        mask = np.zeros((300, 700), np.uint8)
+        rng = np.random.default_rng(9)
+        for index in range(26):
+            x = 20 + index * 25 + int(rng.integers(-4, 5))
+            y = 30 + int(rng.integers(0, 240))
+            cv2.line(mask, (x, y), (x + 18, y + 2), 255, 3)
+        hatch = detect_hatch(self._component(mask), 3.0)
+        self.assertIsNone(hatch, "a sparse scatter is not ruling")
+
+    def test_ruling_must_cover_what_its_spacing_implies(self):
+        from hybrid_vectorizer.shapes import detect_hatch
+
+        full = np.zeros((220, 260), np.uint8)
+        for offset in range(-260, 260, 16):
+            cv2.line(full, (offset, 0), (offset + 220, 220), 255, 3)
+        self.assertIsNotNone(detect_hatch(self._component(full), 3.0))
+
+        sparse = np.zeros((220, 260), np.uint8)
+        for offset in range(-260, 260, 16):
+            cv2.line(sparse, (offset, 0), (offset + 30, 30), 255, 3)
+        self.assertIsNone(detect_hatch(self._component(sparse), 3.0))
+
     def test_a_box_with_one_line_in_it_is_not_ruling(self):
         from hybrid_vectorizer.shapes import detect_hatch
 

@@ -76,12 +76,19 @@ def detect_hatch(
     minimum_lines: int = 4,
     angle_tolerance: float = 8.0,
     minimum_periods: float = 4.0,
+    least_coverage: float = 0.4,
 ) -> Hatch | None:
     """Find ruling: many parallel strokes at one angle and one spacing.
 
     Requiring several periods across the area is what separates ruling from a
     box with a line of text in it, which also has a dominant direction and a
     perfectly good autocorrelation peak at one repetition.
+
+    The ink also has to amount to what the ruling claims. Lines of the measured
+    width at the measured spacing cover a known share of the area, and a scatter
+    of marks that merely lies at one angle covers a tenth of it: measured on
+    these figures, real ruling reaches 0.89 of what it implies and every false
+    one between 0.05 and 0.12.
     """
     mask = component.mask
     if min(mask.shape) < 8 * stroke_width:
@@ -140,11 +147,16 @@ def detect_hatch(
     if spacing <= 1.5 * stroke_width or np.ptp(offsets) < minimum_periods * spacing:
         return None
 
+    coverage = float(component.area) / max(1.0, float(component.width * component.height))
+    implied = stroke_width / spacing
+    if implied <= 0 or coverage < least_coverage * implied:
+        return None
+
     return Hatch(
         angle=float(mean),
         spacing=spacing,
         stroke_width=stroke_width,
-        coverage=float(component.area) / max(1.0, float(component.width * component.height)),
+        coverage=coverage,
     )
 
 

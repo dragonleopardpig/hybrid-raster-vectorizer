@@ -43,7 +43,11 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    Solidity is measured by distance from the background rather than by filling
    the outline, which for anything thin returns the shape again. Ruling reports
    its angle and spacing and becomes an SVG `<pattern>`; a drawn frame around it
-   is kept, and one that is only where the ruling stops is not invented. An area
+   is kept, and one that is only where the ruling stops is not invented. Its ink
+   also has to amount to what it claims: lines of the measured width at the
+   measured spacing cover a known share of the area, and a scatter of marks that
+   merely lies at one angle covers a tenth of it. Measured on these figures real
+   ruling reaches 0.89 of what it implies and every false one 0.05 to 0.12. An area
    printed as a grey **tint** is not ink at all — one threshold cannot hold both
    a dark stroke and a light fill — so it is looked for in the greyscale between
    the ink and the paper and carries the density it was printed at as a
@@ -322,10 +326,10 @@ should be.
 | figure | paper spread | blocks | note |
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
-| `waves1.png` | 0 | 33 | 0.91 recall, 0.84 precision; its dashed waves followed as curves |
+| `waves1.png` | 0 | 33 | 0.90 recall, 0.87 precision; its dashed waves followed as curves |
 | `thicklens_cascade.png` | 8 | 40 | 0.90 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.87 recall, 0.89 precision; the shaded slab read as a 12% tint |
-| `wavefront.png` | 60 | 130 | 0.91 recall, 0.95 precision; heavy grain throughout |
+| `refraction.png` | 36 | 46 | 0.84 recall, 0.89 precision; the shaded slab read as a 12% tint |
+| `wavefront.png` | 60 | 130 | 0.77 recall, 0.94 precision; heavy grain throughout |
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
 ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
@@ -333,6 +337,12 @@ ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
 the point of the 25-level gate.
 
 Shading as dark as the ink is not separable this way and is not attempted.
+
+Recall is worth reading with care where areas are concerned. A sparse fill laid
+over a large part of the page coincidentally covers a great deal of ink, and one
+false ruling on the worn scan — a pattern over a region holding 78% of that
+page's ink — was reading as 0.91 recall. Refusing it dropped the figure to 0.77,
+which is what the drawing was actually reproducing all along.
 
 `complex.png` has gone from 0.787 recall to 0.893:
 
