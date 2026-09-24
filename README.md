@@ -326,9 +326,9 @@ should be.
 | figure | paper spread | blocks | note |
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
-| `waves1.png` | 0 | 33 | 0.90 recall, 0.87 precision; its dashed waves followed as curves |
-| `thicklens_cascade.png` | 8 | 39 | 0.90 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.82 recall, 0.89 precision; the shaded slab read as a 12% tint |
+| `waves1.png` | 0 | 33 | 0.90 recall, 0.89 precision; its dashed waves followed as curves |
+| `thicklens_cascade.png` | 8 | 39 | 0.89 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
+| `refraction.png` | 36 | 46 | 0.83 recall, 0.89 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 82 | 0.80 recall, 0.93 precision; heavy grain throughout |
 
 A broken line is allowed to lose a dash or two behind whatever it passes, so
@@ -336,14 +336,18 @@ that it still reads as one line rather than as two. It used then to be drawn as
 one line from end to end, which put a dash back in every hole the period test
 had forgiven. It is now drawn in the stretches its marks were really found
 along: one line still, reported and measured as one line, written as one path
-with a subpath apiece. That is worth about a point of precision across the
-scans, most of it on `waves1.png`, which went from 0.858 to 0.881.
+with a subpath apiece. `waves1.png` goes from 0.868 precision to 0.893 and
+`thicklens_cascade.png` from 0.947 to 0.958, which is where its two long
+construction lines stop being drawn straight through the lenses they pass
+behind. `complex.png`, `wavefront.png` and both generated figures do not move at
+all, having no line with a hole in it.
 
-It costs `refraction.png` about two points of recall, and that reading is the
-honest one. Seven of its holes are not holes. They are the dots of its dash-dot
-normals, which the fraction-bar guard throws away, and drawing straight through
-them was covering ink the converter had never recognised — the same way a false
-ruling once read as 0.91 recall on the worn scan.
+It costs `thicklens_cascade.png` most of a point of recall and `refraction.png`
+just over one, and that reading is the honest one. Seven of refraction's holes
+are not holes. They are the dots of its dash-dot normals, which the fraction-bar
+guard throws away, and drawing straight through them was covering ink the
+converter had never recognised — the same way a false ruling once read as 0.91
+recall on the worn scan.
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
 ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
