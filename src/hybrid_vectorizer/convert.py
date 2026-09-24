@@ -98,7 +98,7 @@ def analyse(path: Path, options: Options) -> Analysis:
     components = extract(page.ink)
     text_height = median_text_height(components, page.height)
 
-    regions, working = detect_regions(page.ink, page.stroke_width)
+    regions, working = detect_regions(page.ink, page.stroke_width, page.gray)
     rules = detect_rules(page, ink=working)
     ticks = [
         tick
@@ -499,9 +499,11 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
     elements: list[ir.Element] = []
     notes: list[dict] = []
 
-    # Areas go down first so that strokes and marks sit on top of them.
+    # Areas go down first so that strokes and marks sit on top of them, and
+    # tints go under the rest: a tint is what a solid or a ruling is drawn over.
     tolerance = max(1.0, 0.4 * page.stroke_width)
-    for index, region in enumerate(analysis.regions):
+    ordered = sorted(analysis.regions, key=lambda region: region.kind != "tint")
+    for index, region in enumerate(ordered):
         shape = region.outline
         elements.append(
             ir.Area(
@@ -517,6 +519,7 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 hatch_width=region.hatch.stroke_width if region.hatch else page.stroke_width,
                 bordered=region.bordered,
                 border_width=page.stroke_width,
+                opacity=region.opacity,
             )
         )
 
@@ -770,6 +773,7 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
                 "shape": region.outline.kind,
                 "box": [region.component.x, region.component.y,
                         region.component.width, region.component.height],
+                "opacity": round(region.opacity, 2),
                 "hatch": (
                     {"angle_degrees": round(region.hatch.angle, 1),
                      "spacing_px": round(region.hatch.spacing, 2)}

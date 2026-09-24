@@ -646,6 +646,80 @@ class DashedLineTest(unittest.TestCase):
         self.assertFalse(is_dash(self._marks(image)[0], 4.0, (600, 300)))
 
 
+class TintTest(unittest.TestCase):
+    """A grey fill is not ink: one threshold cannot hold a dark stroke and a
+    light tint, so it is looked for in the greyscale instead."""
+
+    def _sheet(self):
+        """A page with ink on it, and grain, as any scan has."""
+        sheet = np.full((500, 700), 250, np.float32)
+        for y in (60, 100, 430, 470):
+            cv2.line(sheet, (40, y), (660, y), 15, 5)
+        for x in (60, 200, 340, 480, 620):
+            cv2.line(sheet, (x, 40), (x, 480), 15, 5)
+        return sheet
+
+    def _finish(self, sheet, seed=7):
+        rng = np.random.default_rng(seed)
+        gray = np.clip(sheet + rng.normal(0, 4, sheet.shape), 0, 255).astype(np.uint8)
+        ink = np.zeros(gray.shape, np.uint8)
+        ink[gray < 100] = 255
+        return gray, ink
+
+    def _outlined_tint(self, sheet):
+        cv2.rectangle(sheet, (110, 150), (560, 380), 200, -1)
+        cv2.rectangle(sheet, (110, 150), (560, 380), 15, 4)
+        return sheet
+
+    def test_a_drawn_tint_is_found_at_the_density_it_was_printed(self):
+        from hybrid_vectorizer.shapes import detect_tints
+
+        tints = detect_tints(*self._finish(self._outlined_tint(self._sheet())), 4.0)
+        self.assertEqual(len(tints), 1)
+        self.assertAlmostEqual(tints[0].opacity, 0.2, delta=0.06)
+        self.assertEqual(tints[0].kind, "tint")
+
+    def test_a_soft_stain_is_not_a_tint(self):
+        """A stain spreads across the page instead of being outlined."""
+        from hybrid_vectorizer.shapes import detect_tints
+
+        sheet = self._sheet()
+        blob = np.zeros(sheet.shape, np.float32)
+        cv2.circle(blob, (330, 260), 160, 1.0, -1)
+        sheet = sheet - 55 * cv2.GaussianBlur(blob, (0, 0), 70)
+        self.assertEqual(detect_tints(*self._finish(sheet), 4.0), [])
+
+    def test_a_screened_tint_survives_its_own_holes(self):
+        """A printed tint is mostly band with a scatter of holes in it."""
+        from hybrid_vectorizer.shapes import detect_tints
+
+        sheet = self._outlined_tint(self._sheet())
+        rng = np.random.default_rng(5)
+        holes = (rng.random(sheet.shape) < 0.3)
+        region = np.zeros(sheet.shape, bool)
+        region[155:375, 115:555] = True
+        sheet[region & holes] = 250
+        self.assertEqual(len(detect_tints(*self._finish(sheet), 4.0)), 1)
+
+    def test_an_area_already_claimed_is_not_tinted_as_well(self):
+        from hybrid_vectorizer.shapes import detect_tints
+
+        gray, ink = self._finish(self._outlined_tint(self._sheet()))
+        claimed = np.zeros(gray.shape, np.uint8)
+        claimed[140:390, 100:570] = 255
+        self.assertEqual(detect_tints(gray, ink, 4.0, claimed=claimed), [])
+
+    def test_a_tint_survives_the_paper_estimate(self):
+        """A tile estimate took these for paper and divided them away."""
+        from hybrid_vectorizer.preprocess import estimate_paper
+
+        gray = np.full((500, 700), 250, np.uint8)
+        cv2.rectangle(gray, (120, 140), (560, 380), 190, -1)
+        paper = estimate_paper(gray)
+        inside = paper[200:320, 200:480]
+        self.assertGreater(int(inside.min()), 225, "the tint was taken for paper")
+
+
 class FrameTest(unittest.TestCase):
     def _component(self, mask):
         from hybrid_vectorizer.components import Component
@@ -872,6 +946,9 @@ class MixedFigureTest(unittest.TestCase):
                     f"a {series.shape} at ({x:.0f},{y:.0f}) is the legend's own sample",
                 )
 
+    def test_the_ruled_area_is_not_also_reported_as_a_tint(self):
+        self.assertEqual([r for r in self.analysis.regions if r.kind == "tint"], [])
+
     def test_two_marker_series_with_the_right_shapes(self):
         shapes = sorted(series.shape for series in self.analysis.marker_sets)
         self.assertEqual(shapes, ["circle", "rectangle"])
@@ -930,7 +1007,7 @@ class NoRegressionTest(unittest.TestCase):
         from hybrid_vectorizer.convert import Options, analyse
 
         analysis = analyse(EXAMPLE, Options())
-        self.assertEqual(analysis.regions, [])
+        self.assertEqual(analysis.regions, [], "a stroke figure has no areas or tints")
         self.assertEqual(analysis.marker_sets, [])
         self.assertEqual(analysis.frames, [])
         self.assertEqual(analysis.legends, [])
@@ -999,6 +1076,27 @@ class OutputTest(unittest.TestCase):
         content = self._document().to_svg()
         root = ET.fromstring(content)
         self.assertEqual(root.findall(f"{SVG_NAMESPACE}rect"), [])
+
+    def test_a_tint_carries_its_density(self):
+        from hybrid_vectorizer import ir
+
+        document = ir.Document(width=100, height=50)
+        document.geometry.append(
+            ir.Area(kind="area", identifier="area-0", shape="rectangle",
+                    parameters={"x": 5, "y": 5, "width": 40, "height": 20}, opacity=0.18)
+        )
+        root = ET.fromstring(document.to_svg())
+        rect = root.find(f".//{SVG_NAMESPACE}rect[@id='area-0']")
+        self.assertEqual(rect.attrib["fill-opacity"], "0.18")
+
+    def test_a_solid_area_carries_no_density(self):
+        from hybrid_vectorizer import ir
+
+        document = ir.Document(width=100, height=50)
+        document.geometry.append(
+            ir.Area(kind="area", identifier="area-0", path="M0 0 L9 0 L9 9 Z")
+        )
+        self.assertNotIn("fill-opacity", document.to_svg())
 
     def test_a_background_can_be_asked_for(self):
         content = self._document(background="#ffffff").to_svg()

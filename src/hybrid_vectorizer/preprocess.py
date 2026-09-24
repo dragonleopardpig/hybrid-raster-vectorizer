@@ -41,21 +41,61 @@ def _to_gray(image: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
 
 
-def estimate_paper(gray: np.ndarray, *, tiles: int = 48) -> np.ndarray:
-    """Estimate the paper behind the drawing, ignoring the drawing itself.
+def _smooth_surface(gray: np.ndarray, usable: np.ndarray, degree: int, samples: int) -> np.ndarray:
+    """Least-squares surface of the given order through the usable pixels."""
+    height, width = gray.shape
+    ys, xs = np.nonzero(usable)
+    if ys.size < 500:
+        return np.full(gray.shape, 255.0)
 
-    Closing or a percentile filter would take a large filled area for
-    background and flatten it away. Instead the ink is left out of the estimate
-    entirely and the paper is carried across it by inpainting, so an area with
-    no paper showing through inherits the paper around it and survives.
+    step = max(1, ys.size // samples)
+    ys, xs = ys[::step], xs[::step]
+    powers = [(i, j) for i in range(degree + 1) for j in range(degree + 1 - i)]
+
+    u, v = xs / width, ys / height
+    design = np.column_stack([u**i * v**j for i, j in powers])
+    coefficients, *_rest = np.linalg.lstsq(design, gray[ys, xs].astype(np.float64), rcond=None)
+
+    grid_v, grid_u = np.mgrid[0:height, 0:width]
+    grid_u = grid_u / width
+    grid_v = grid_v / height
+    surface = sum(
+        coefficient * (grid_u**i * grid_v**j)
+        for coefficient, (i, j) in zip(coefficients, powers)
+    )
+    return np.clip(surface, 1.0, 255.0)
+
+
+def estimate_paper(
+    gray: np.ndarray,
+    *,
+    tiles: int = 48,
+    degree: int = 3,
+    samples: int = 40000,
+    content: float = 0.92,
+) -> np.ndarray:
+    """Estimate the paper behind the drawing, in two passes.
+
+    The first pass fits a surface too smooth to follow anything that was drawn,
+    and whatever sits well below it is content rather than paper. The second
+    pass then estimates the paper tile by tile from the pixels that survived,
+    which follows blotchy staining that no smooth surface can, and carries the
+    estimate across the content by inpainting.
+
+    Both passes are needed. A tile estimate alone takes a figure's grey slabs
+    for paper and divides them away, leaving them 7% darker than the page where
+    they are really 24%. A smooth surface alone leaves a badly stained page
+    with half again as many spurious labels.
     """
     height, width = gray.shape
+    threshold, _binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    lighter_than_ink = gray > threshold
+
+    rough = _smooth_surface(gray, lighter_than_ink, degree, samples)
+    paper = lighter_than_ink & (gray.astype(np.float64) / rough > content)
+
     step = max(8, min(height, width) // tiles)
     rows, columns = max(1, height // step), max(1, width // step)
-
-    threshold, _binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    paper = gray > threshold
-
     coarse = np.zeros((rows, columns), np.uint8)
     missing = np.zeros((rows, columns), np.uint8)
     for row in range(rows):
@@ -72,7 +112,7 @@ def estimate_paper(gray: np.ndarray, *, tiles: int = 48) -> np.ndarray:
 
     if np.any(missing):
         if np.all(missing):
-            return np.full_like(gray, 255)
+            return np.clip(rough, 1, 255).astype(np.uint8)
         coarse = cv2.inpaint(coarse, missing, 3, cv2.INPAINT_TELEA)
 
     coarse = cv2.GaussianBlur(coarse, (0, 0), 1.2)

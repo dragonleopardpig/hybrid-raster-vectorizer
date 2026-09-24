@@ -235,6 +235,7 @@ class Region:
     outline: Outline
     hatch: Hatch | None = None
     bordered: bool = False
+    opacity: float = 1.0
 
 
 @dataclass
@@ -277,8 +278,94 @@ def has_border(component: Component, stroke_width: float, *, threshold: float = 
     return int(np.count_nonzero(cv2.bitwise_and(edge, near_ink))) / total >= threshold
 
 
+def detect_tints(
+    gray: np.ndarray,
+    ink: np.ndarray,
+    stroke_width: float,
+    *,
+    claimed: np.ndarray | None = None,
+    minimum_enclosed: float = 0.85,
+    smallest: float = 12.0,
+) -> list[Region]:
+    """Find areas printed as a grey tint rather than drawn with a pen.
+
+    A tint is not ink. One threshold cannot hold both a dark stroke and a light
+    fill, so a tint is looked for in the greyscale, between the ink and the
+    paper, and carries the density it was printed at rather than becoming solid.
+
+    A stain on the scan sits in the same band. What separates them is that a
+    tint in a technical drawing is an area someone outlined: nearly all of its
+    boundary runs along drawn ink. Measured on these figures, tints have 0.99 to
+    1.00 of their boundary on ink and stains 0.25 to 0.76.
+
+    Edge sharpness was tried first, as the gradient around the boundary against
+    the gradient inside. It appeared to separate them, but only because these
+    tints happen to be outlined, and it collapses on an evenly printed area
+    where both medians are zero.
+    """
+    if not np.any(ink == 0):
+        return []
+
+    paper = float(np.percentile(gray[ink == 0], 90))
+    threshold, _binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    low = threshold + 0.25 * (paper - threshold)
+    high = paper - max(10.0, 0.06 * paper)
+    if high <= low:
+        return []
+
+    band = ((gray > low) & (gray < high)).astype(np.uint8) * 255
+    # Fill the screen first: a tint is mostly band with a scatter of holes, and
+    # opening it straight away leaves nowhere for the disc to sit.
+    band = cv2.morphologyEx(band, cv2.MORPH_CLOSE, _disc(max(1, int(stroke_width))))
+    band = cv2.morphologyEx(band, cv2.MORPH_OPEN, _disc(max(2, int(2 * stroke_width))))
+    if claimed is not None:
+        band = cv2.bitwise_and(band, cv2.bitwise_not(claimed))
+
+    near_ink = cv2.dilate(ink, _disc(max(2, int(1.5 * stroke_width))))
+    ring = _disc(4)
+    floor = (smallest * stroke_width) ** 2
+
+    regions: list[Region] = []
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(band, 8)
+    for label in range(1, count):
+        x, y, width, height, area = (int(v) for v in stats[label])
+        if area < floor:
+            continue
+        mask = (labels == label).astype(np.uint8) * 255
+        inside = cv2.erode(mask, ring) > 0
+        if not inside.any():
+            continue
+
+        contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            continue
+        boundary = max(contours, key=cv2.contourArea).reshape(-1, 2)
+        on_ink = sum(1 for px, py in boundary if near_ink[py, px] > 0)
+        if on_ink / max(1, len(boundary)) < minimum_enclosed:
+            continue
+
+        level = float(np.median(gray[inside]))
+        component = Component(
+            label=label, x=x, y=y, width=width, height=height, area=area,
+            centroid=(x + width / 2.0, y + height / 2.0),
+            mask=mask[y : y + height, x : x + width].copy(),
+        )
+        shape = outline(component, stroke_width)
+        if shape is None:
+            continue
+        regions.append(
+            Region(
+                component=component,
+                kind="tint",
+                outline=shape,
+                opacity=float(np.clip(1.0 - level / max(paper, 1.0), 0.02, 1.0)),
+            )
+        )
+    return regions
+
+
 def detect_regions(
-    ink: np.ndarray, stroke_width: float
+    ink: np.ndarray, stroke_width: float, gray: np.ndarray | None = None
 ) -> tuple[list[Region], np.ndarray]:
     """Take the filled and ruled areas out of the ink before anything else.
 
@@ -291,6 +378,8 @@ def detect_regions(
     solid_ink, _rest = split_solids(ink, stroke_width)
     regions: list[Region] = []
     working = ink.copy()
+    if gray is None:
+        gray = 255 - ink
 
     area_floor = (8.0 * stroke_width) ** 2
     for component in extract(solid_ink):
@@ -323,6 +412,12 @@ def detect_regions(
         )
         patch = working[component.y : component.bottom, component.x : component.right]
         patch[component.mask > 0] = 0
+
+    # Tints last, and only where nothing else has claimed the page. Their own
+    # pixels are not ink, so nothing is taken out of the working image: the
+    # strokes drawn across a tint still have to be traced.
+    claimed = cv2.bitwise_and(ink, cv2.bitwise_not(working))
+    regions.extend(detect_tints(gray, ink, stroke_width, claimed=claimed))
 
     return regions, working
 

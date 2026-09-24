@@ -86,10 +86,12 @@ def _run_convert(args: argparse.Namespace) -> None:
         )
     for area in summary.get("areas", []):
         hatch = area["hatch"]
-        detail = (
-            f"hatched {hatch['angle_degrees']:.0f}deg at {hatch['spacing_px']:.1f}px"
-            if hatch else "filled"
-        )
+        if hatch:
+            detail = f"hatched {hatch['angle_degrees']:.0f}deg at {hatch['spacing_px']:.1f}px"
+        elif area["kind"] == "tint":
+            detail = f"tinted at {area['opacity']:.0%}"
+        else:
+            detail = "filled"
         print(f"  area        {area['shape']} {area['box']}, {detail}")
     for series in summary.get("marker_series", []):
         fill = "filled" if series["filled"] else "hollow"

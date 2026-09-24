@@ -125,6 +125,7 @@ class Area(Element):
     hatch_width: float = 1.0
     bordered: bool = False
     border_width: float = 1.0
+    opacity: float = 1.0
 
     @property
     def pattern(self) -> str | None:
@@ -152,7 +153,8 @@ class Area(Element):
             if self.bordered
             else ' stroke="none"'
         )
-        common = f'class="area {self.shape}" {self.attributes()} fill="{fill}"{edge}'
+        tint = f' fill-opacity="{_number(self.opacity)}"' if self.opacity < 1.0 else ""
+        common = f'class="area {self.shape}" {self.attributes()} fill="{fill}"{tint}{edge}'
         if self.shape == "rectangle" and self.parameters:
             p = self.parameters
             return [

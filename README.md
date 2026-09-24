@@ -18,11 +18,15 @@ present.
 and every decision it makes is recorded in a JSON report beside the SVG.
 
 1. **Preprocess** — greyscale, then the paper is evened out where it needs to
-   be. The paper is estimated from the pixels that are *not* ink and carried
-   across the ink by inpainting, so an area with no paper showing through
-   inherits the paper around it: closing or a percentile filter would take a
-   large filled area for background and flatten it away. A page whose paper
-   varies by less than 25 grey levels is left untouched. Then Otsu, then grain
+   be, in two passes. The first fits a surface too smooth to follow anything
+   drawn, and whatever sits well below it is content rather than paper. The
+   second estimates the paper tile by tile from what survived, which follows
+   blotchy staining that no smooth surface can, and carries the estimate across
+   the content by inpainting. Both are needed: tiles alone take a figure's grey
+   slabs for paper and divide them away, leaving them 7% darker than the page
+   where they are really 24%; a smooth surface alone leaves a badly stained page
+   with half again as many spurious labels. A page whose paper varies by less
+   than 25 grey levels is left untouched. Then Otsu, then grain
    below the pen width is dropped — on a worn scan it survives a fixed speck
    threshold and dominates every later statistic. The pen width is measured on
    the medial axis, and almost every later threshold is a multiple of it.
@@ -39,7 +43,12 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    Solidity is measured by distance from the background rather than by filling
    the outline, which for anything thin returns the shape again. Ruling reports
    its angle and spacing and becomes an SVG `<pattern>`; a drawn frame around it
-   is kept, and one that is only where the ruling stops is not invented.
+   is kept, and one that is only where the ruling stops is not invented. An area
+   printed as a grey **tint** is not ink at all — one threshold cannot hold both
+   a dark stroke and a light fill — so it is looked for in the greyscale between
+   the ink and the paper and carries the density it was printed at as a
+   `fill-opacity`. A stain on the scan sits in the same band; what separates
+   them is that a tint in a technical drawing is an area someone outlined.
 5. **Marker series** — congruent marks that stand alone are grouped into a
    series and named (circle, rectangle, triangle), then emitted once as a
    `<symbol>` and placed with `<use>`. Once the shape is known from the copies
@@ -285,8 +294,8 @@ should be.
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
 | `waves1.png` | 0 | 44 | clean |
-| `thicklens_cascade.png` | 42 | 38 | flattened |
-| `refraction.png` | 56 | 53 | flattened; grey stipple read as filled areas |
+| `thicklens_cascade.png` | 8 | 46 | four shaded lens elements read as tints |
+| `refraction.png` | 36 | 52 | flattened; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 154 | heavy grain throughout; still the worst case |
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
@@ -321,8 +330,12 @@ shapes they actually are, which is the trade the whole project makes.
 - Dash-dot and other mixed patterns: the period test expects one dash length,
   so a line that alternates long and short is not recognised as one line.
 - Text on a curve, and text whose marks do not lie on a straight line.
-- Embedded images, and areas filled with anything other than solid ink or
-  evenly spaced ruling. Grey stipple is read as a filled area.
+- A tinted area that is not outlined. Being outlined is what tells a printed
+  tint from a stain on the scan, so an unbounded one is left alone rather than
+  guessed at — on `refraction.png` the right-hand slab, whose border runs off
+  the page and is drawn torn, is missed for that reason.
+- Embedded images, and areas filled with anything other than solid ink, evenly
+  spaced ruling, or an even tint.
 - Multi-line prose blocks and rotated text.
 - Occlusion recovery beyond rejoining strokes an axis cut apart.
 - Curve families other than lines, polynomials and sinusoids.
