@@ -678,6 +678,50 @@ class DashedLineTest(unittest.TestCase):
         self.assertEqual(lines, [])
         self.assertEqual(used, set())
 
+    def test_a_missing_dash_does_not_break_the_period(self):
+        """A line passing behind something loses a dash and leaves a double gap."""
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x in (40, 84, 128, 216, 260, 304, 348):   # 172 is missing
+            cv2.line(image, (x, 150), (x + 30, 150), 255, 4)
+        lines, _used = find_dashed_lines(self._marks(image), 4.0, (600, 300))
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(len(lines[0].components), 7)
+        self.assertAlmostEqual(lines[0].gap, 14.0, delta=6.0)
+
+    def test_a_mark_with_ink_above_and_below_is_not_a_dash(self):
+        """Fraction bars are collinear and evenly spaced; what they have is
+        a numerator over them and a denominator under."""
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x in range(40, 520, 100):
+            cv2.line(image, (x, 150), (x + 60, 150), 255, 4)
+            cv2.rectangle(image, (x + 15, 110), (x + 45, 138), 255, -1)
+            cv2.rectangle(image, (x + 20, 162), (x + 40, 190), 255, -1)
+        lines, used = find_dashed_lines(self._marks(image), 4.0, (600, 300), ink=image)
+        self.assertEqual(lines, [])
+        self.assertEqual(used, set())
+
+    def test_the_result_does_not_depend_on_which_mark_comes_first(self):
+        """Walking outward from a seed made this swing with the reach."""
+        from hybrid_vectorizer.dashes import find_dashed_lines
+
+        image = self._canvas()
+        for x in range(40, 520, 44):
+            cv2.line(image, (x, 100), (x + 30, 100), 255, 4)
+        for y in range(180, 290, 30):
+            cv2.line(image, (500, y), (500, y + 18), 255, 4)
+        marks = self._marks(image)
+        first = find_dashed_lines(marks, 4.0, (600, 300))[0]
+        second = find_dashed_lines(list(reversed(marks)), 4.0, (600, 300))[0]
+        self.assertEqual(len(first), len(second))
+        self.assertEqual(
+            sorted(len(line.components) for line in first),
+            sorted(len(line.components) for line in second),
+        )
+
     def test_two_marks_are_not_a_line(self):
         from hybrid_vectorizer.dashes import find_dashed_lines
 
@@ -1052,6 +1096,27 @@ class SeriesFigureTest(unittest.TestCase):
             for px, py in series.positions:
                 inside = x <= px <= x + width and y <= py <= y + height
                 self.assertFalse(inside, f"{series.shape} at ({px:.0f},{py:.0f}) is a sample")
+
+
+@unittest.skipUnless((ROOT / "examples" / "thicklens_cascade.png").exists(), "scan missing")
+class LensCascadeTest(unittest.TestCase):
+    """Its broken lines run behind the lenses, losing a dash where they pass."""
+
+    @classmethod
+    def setUpClass(cls):
+        from hybrid_vectorizer.convert import Options, analyse
+
+        cls.analysis = analyse(ROOT / "examples" / "thicklens_cascade.png", Options())
+
+    def test_the_long_horizontal_broken_lines_are_found(self):
+        long_ones = [line for line in self.analysis.dashed if line.length > 700]
+        self.assertGreaterEqual(len(long_ones), 2)
+        for line in long_ones:
+            self.assertGreaterEqual(len(line.components), 8)
+
+    def test_the_shaded_lens_elements_are_tints(self):
+        tints = [region for region in self.analysis.regions if region.kind == "tint"]
+        self.assertEqual(len(tints), 4)
 
 
 class NoRegressionTest(unittest.TestCase):

@@ -277,7 +277,7 @@ def partition(
     # Broken lines go first: each of their marks is small enough to be taken for
     # a letter, and once grouped into a label the line cannot be recovered.
     dashed, claimed = find_dashed_lines(
-        pieces, page.stroke_width, (page.width, page.height)
+        pieces, page.stroke_width, (page.width, page.height), ink=residual
     )
     pieces = [piece for piece in pieces if id(piece) not in claimed]
 

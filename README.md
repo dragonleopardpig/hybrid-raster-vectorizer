@@ -55,12 +55,16 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    out in the plot, the legend's sample is claimed by resemblance, since that one
    never stands alone.
 6. **Broken lines** — collinear marks of one period become a single line with a
-   `stroke-dasharray`. A row of tick labels offers a fraction bar apiece —
-   short, straight, thin, horizontal and collinear — and every other test passes
-   them; what separates them is the period. Measured on these figures a real
-   broken line spaces its marks to within 11–12%, while a row of labels manages
-   only 31–81%. Dash *length* is deliberately not used, because the marks at
-   each end of a line are clipped and vary as much as a false chain's do.
+   `stroke-dasharray`. Every mark proposes the line through itself and the marks
+   lying along it answer; walking outward from a seed instead made the result
+   depend on which mark came first and how far a step could reach, and widening
+   that reach by half took one figure from two lines to one. The period is
+   measured as multiples of one repeat, so a line that passes behind a lens and
+   loses a dash still reads as regular. A row of tick labels is short, straight,
+   thin and collinear and passes every other test; what it has that a dash has
+   not is a numerator above it and a denominator below. Dash *length* is
+   deliberately not used to judge a chain, because the marks at each end of a
+   line are clipped and vary as much as a false chain's do.
 7. **Legends** — a closed box whose ink is about what tracing its boundary once
    would use, and whose hull fills its bounding box, is a frame. Without a box —
    which is the common case — a legend is found by the shape of its rows
@@ -305,8 +309,8 @@ should be.
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
 | `waves1.png` | 0 | 44 | clean |
-| `thicklens_cascade.png` | 8 | 46 | four shaded lens elements read as tints |
-| `refraction.png` | 36 | 52 | flattened; the shaded slab read as a 12% tint |
+| `thicklens_cascade.png` | 8 | 46 | 0.86 recall, 0.87 precision; four lens tints, both long broken lines |
+| `refraction.png` | 36 | 52 | 0.88 recall, 0.88 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 154 | heavy grain throughout; still the worst case |
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
@@ -339,10 +343,7 @@ shapes they actually are, which is the trade the whole project makes.
   hollow sample's own interior is emptier than the gap beside it. The row is
   recorded with its name and no sample rather than dropped.
 - Dash-dot and other mixed patterns: the period test expects one dash length,
-  so a line that alternates long and short is not recognised as one line. On
-  `refraction.png`, whose construction lines are dash-dot, this is worth less
-  than it sounds: its unreproduced ink is spread over 57 clusters of which the
-  largest is 1.46%, so there is no one thing to fix.
+  so a line that alternates long and short is not recognised as one line.
 - Curved broken lines: the marks are matched along a straight run.
 - Text on a curve, and text whose marks do not lie on a straight line.
 - A tinted area that is not outlined. Being outlined is what tells a printed
