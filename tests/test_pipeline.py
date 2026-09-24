@@ -11,7 +11,14 @@ from hybrid_vectorizer import latex as tex
 from hybrid_vectorizer.components import extract, median_text_height
 from hybrid_vectorizer.consensus import Slot, cluster, reconcile
 from hybrid_vectorizer.convert import Options, analyse
-from hybrid_vectorizer.fitting import choose_model, fit_bezier, fit_sinusoid, path_data, _bezier
+from hybrid_vectorizer.fitting import (
+    _bezier,
+    choose_model,
+    fit_bezier,
+    fit_polynomial,
+    fit_sinusoid,
+    path_data,
+)
 from hybrid_vectorizer.preprocess import Page, estimate_stroke_width
 from hybrid_vectorizer.primitives import detect_rules, detect_ticks
 from hybrid_vectorizer.textlayout import find_fraction_bars, group_blocks
@@ -64,6 +71,23 @@ class FittingTest(unittest.TestCase):
                 float(np.min(np.linalg.norm(dense - point, axis=1))) for point in points
             )
             self.assertLessEqual(worst, tolerance, f"tolerance {tolerance}")
+
+    def test_a_high_degree_fit_over_real_coordinates_stays_conditioned(self):
+        """Raising pixel coordinates to the fifteenth power is not conditioned."""
+        import warnings
+
+        x = np.linspace(200.0, 1800.0, 900)
+        y = 40.0 * np.sin(x / 300.0) + 300.0
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            model = fit_polynomial(x, y, 5)
+        self.assertIsNotNone(model)
+        self.assertLess(float(np.max(np.abs(model.sample(x) - y))), 1.0)
+
+    def test_a_fitted_polynomial_samples_where_it_was_fitted(self):
+        x = np.linspace(500.0, 2500.0, 400)
+        model = fit_polynomial(x, 3.0 * x + 17.0, 1)
+        self.assertLess(float(np.max(np.abs(model.sample(x) - (3.0 * x + 17.0)))), 1e-6)
 
     def test_path_data_starts_with_a_move(self):
         segments = fit_bezier(np.column_stack([np.arange(50.0), np.arange(50.0)]), 1.0)
@@ -214,6 +238,37 @@ class RotatedTextTest(unittest.TestCase):
             self._block(134, 312, 14, 14).components[0],
         ]
         self.assertEqual(text_angle(block), 0.0)
+
+    def test_marks_leaning_with_their_run_are_a_line_not_a_label(self):
+        """Four diagonal dashed lines were being read as slanted labels."""
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.textlayout import Block, text_angle
+
+        marks = []
+        for step in range(6):
+            patch = np.zeros((46, 46), np.uint8)
+            cv2.line(patch, (6, 40), (40, 6), 255, 4)
+            marks.append(Component(
+                label=1, x=100 + step * 52, y=400 - step * 52, width=46, height=46,
+                area=int(np.count_nonzero(patch)),
+                centroid=(123 + step * 52, 423 - step * 52), mask=patch,
+            ))
+        self.assertEqual(text_angle(Block(components=marks)), 0.0)
+
+    def test_upright_glyphs_on_a_slope_are_still_a_label(self):
+        from hybrid_vectorizer.components import Component
+        from hybrid_vectorizer.textlayout import Block, text_angle
+
+        marks = []
+        for step in range(6):
+            patch = np.zeros((30, 22), np.uint8)
+            cv2.rectangle(patch, (4, 3), (18, 27), 255, 3)
+            marks.append(Component(
+                label=1, x=100 + step * 40, y=400 - step * 40, width=22, height=30,
+                area=int(np.count_nonzero(patch)),
+                centroid=(111 + step * 40, 415 - step * 40), mask=patch,
+            ))
+        self.assertAlmostEqual(text_angle(Block(components=marks)), -45.0, delta=6.0)
 
     def test_a_fraction_is_stacked_but_not_turned(self):
         from hybrid_vectorizer.textlayout import text_angle

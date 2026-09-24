@@ -24,9 +24,11 @@ class Model:
 @dataclass
 class Polynomial(Model):
     coefficients: np.ndarray = field(default_factory=lambda: np.zeros(1))
+    centre: float = 0.0
+    scale: float = 1.0
 
     def sample(self, x: np.ndarray) -> np.ndarray:
-        return np.polyval(self.coefficients, x)
+        return np.polyval(self.coefficients, (np.asarray(x) - self.centre) / self.scale)
 
 
 @dataclass
@@ -42,19 +44,33 @@ def _rms(residual: np.ndarray) -> float:
 
 
 def fit_polynomial(x: np.ndarray, y: np.ndarray, degree: int) -> Polynomial | None:
+    """Fit on a centred, scaled abscissa.
+
+    Fitting a fifth-degree curve directly against pixel coordinates in the
+    thousands raises x to the fifteenth power inside the normal equations, which
+    numpy rightly calls poorly conditioned. Moving x to roughly [-1, 1] first
+    costs nothing and makes the fit mean what it says.
+    """
     if x.size <= degree + 1:
         return None
-    coefficients = np.polyfit(x, y, degree)
-    residual = np.polyval(coefficients, x) - y
+    centre = float(np.mean(x))
+    scale = float(np.max(np.abs(x - centre))) or 1.0
+    reduced = (x - centre) / scale
+
+    coefficients = np.polyfit(reduced, y, degree)
+    residual = np.polyval(coefficients, reduced) - y
     name = {1: "line", 2: "parabola"}.get(degree, f"polynomial-{degree}")
     return Polynomial(
         name=name,
         parameters={"degree": float(degree)},
         rms=_rms(residual),
         description=" + ".join(
-            f"{c:.6g}x^{degree - i}" for i, c in enumerate(coefficients)
-        ),
+            f"{c:.6g}t^{degree - i}" for i, c in enumerate(coefficients)
+        )
+        + f"  where t = (x - {centre:.6g}) / {scale:.6g}",
         coefficients=coefficients,
+        centre=centre,
+        scale=scale,
     )
 
 

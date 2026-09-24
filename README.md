@@ -92,7 +92,10 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    marks are strung out, rather than chosen from a list of upright and quarter
    turns — one label on these scans runs along the vector it describes, at 45°.
    Four marks are needed before a slope is believed: three marks of `4I` with a
-   sunken subscript measure 22°. Fraction bars are found
+   sunken subscript measure 22°. Marks that lean the way their own run goes are
+   a broken line rather than a label — a glyph stands upright whatever line it
+   sits on — which is what keeps four diagonal dashed lines on one scan from
+   being read as slanted text. Fraction bars are found
    structurally, by being the only rule with ink both above and below, which is
    what separates them from an equals sign or a leading minus. Each bar claims
    its own numerator and denominator, so adjacent tick labels cannot run
@@ -243,6 +246,14 @@ Font matching ranks installed families against confidently-read prose. On the
 example it picks TeX Gyre Bonum at a score of 0.53 — a weak match, reported as
 such. Use `--font` to override it.
 
+Improving it is not worth much. Every installed family and weight was scored by
+rendering the whole page and measuring it against the scan: 578 combinations
+span 1.80 to 1.95 on recall plus precision, and the top ten sit within 0.005 of
+each other, with monospaced icon fonts among them. The text that is already read
+correctly is what caps agreement — on all four scans the unreproduced ink is a
+long tail of glyph-sized clusters, not a missing feature — and no choice of
+installed face closes that gap.
+
 ## Reproduce
 
 ```sh
@@ -328,7 +339,11 @@ shapes they actually are, which is the trade the whole project makes.
   hollow sample's own interior is emptier than the gap beside it. The row is
   recorded with its name and no sample rather than dropped.
 - Dash-dot and other mixed patterns: the period test expects one dash length,
-  so a line that alternates long and short is not recognised as one line.
+  so a line that alternates long and short is not recognised as one line. On
+  `refraction.png`, whose construction lines are dash-dot, this is worth less
+  than it sounds: its unreproduced ink is spread over 57 clusters of which the
+  largest is 1.46%, so there is no one thing to fix.
+- Curved broken lines: the marks are matched along a straight run.
 - Text on a curve, and text whose marks do not lie on a straight line.
 - A tinted area that is not outlined. Being outlined is what tells a printed
   tint from a stain on the scan, so an unbounded one is left alone rather than

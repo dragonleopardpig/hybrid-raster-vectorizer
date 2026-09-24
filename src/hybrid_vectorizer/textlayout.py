@@ -217,7 +217,26 @@ def text_angle(
 
     angle = float(np.degrees(np.arctan2(axes[0][1], axes[0][0])))
     angle = (angle + 90.0) % 180.0 - 90.0
-    return 0.0 if abs(angle) < deadband else angle
+    if abs(angle) < deadband:
+        return 0.0
+
+    # Marks strung along a line are not always letters. A glyph stands upright
+    # whatever line it sits on, while every mark of a broken line points the
+    # way the line goes, so marks that lean with the run are a line, not a label.
+    from .dashes import _rect
+
+    leaning = 0
+    for component in block.components:
+        _centre, axis, long_side, short_side = _rect(component)
+        if long_side < 2.0 * max(short_side, 1.0):
+            continue
+        own = float(np.degrees(np.arctan2(axis[1], axis[0])))
+        if abs((own - angle + 90.0) % 180.0 - 90.0) <= 25.0:
+            leaning += 1
+    if leaning >= 0.6 * len(block.components):
+        return 0.0
+
+    return angle
 
 
 def group_vertical(
