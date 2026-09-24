@@ -323,8 +323,8 @@ should be.
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
 | `waves1.png` | 0 | 33 | 0.91 recall, 0.84 precision; its dashed waves followed as curves |
-| `thicklens_cascade.png` | 8 | 42 | 0.89 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.88 recall, 0.88 precision; the shaded slab read as a 12% tint |
+| `thicklens_cascade.png` | 8 | 40 | 0.90 recall, 0.95 precision; lens tints, broken lines, dimension arrows |
+| `refraction.png` | 36 | 46 | 0.87 recall, 0.89 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 130 | 0.91 recall, 0.95 precision; heavy grain throughout |
 
 Flattening the paper cut `wavefront.png` from 13.8% of the page being read as
