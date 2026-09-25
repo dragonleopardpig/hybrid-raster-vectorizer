@@ -423,9 +423,27 @@ shapes they actually are, which is the trade the whole project makes.
   straight-line finder refuses those bars with its hemmed-in test, and that test
   cannot simply be shared — it also discards two thirds of the genuine curve
   marks on the two busiest figures, because a mark's own pen sits inside its
-  nearest probe. What is needed is a test that separates a bent run from a
-  straight one, since a straight run of dashes is the other finder's business
-  and has already been refused there.
+  nearest probe.
+
+  The test that separates a bent run from a straight one has been written and
+  measured, and it works: the median turn from one step of a run to the next,
+  which has to be large enough that the run is not a straight broken line and
+  small enough that it is one pen stroke. The interference figure's three runs
+  at a doubled reach turn 1.5, 67 and 89 degrees a step — one dead-straight row
+  of fraction bars and two paths stitched between marks that have nothing to do
+  with each other. A drawn curve on these figures turns between 7 and 30. With
+  a band of 4 to 45 degrees that figure holds at no curves at all under a 46px
+  reach, where any widening had given it one or two.
+
+  It is not in the code, because nothing it unblocks pays for itself. Widening
+  the reach then takes `waves1.png` from 0.890 recall to 0.913 and its lost ink
+  from 10.2% to 7.9%, draws the first of its three dashed sines completely, and
+  gives back 0.017 of precision; across the eight figures the mean moves by a
+  thousandth either way whether the reach is widened by half, doubled, or left
+  alone. The new curve ink lands within 7px of the real dashes but not within
+  3px, so both maps improve while the 3px score does not, and one run still
+  stitches across a trough. A monotonic-progress test does not catch that one:
+  every run already advances, the worst backward step being 0.2% of its span.
 - Text on a curve, and text whose marks do not lie on a straight line.
 - A tinted area that is not outlined. Being outlined is what tells a printed
   tint from a stain on the scan, so an unbounded one is left alone rather than
