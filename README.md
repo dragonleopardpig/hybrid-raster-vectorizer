@@ -412,6 +412,20 @@ shapes they actually are, which is the trade the whole project makes.
 - A symbol the recogniser names but this renderer has no glyph for. It draws
   nothing rather than setting the command's own name as a word, which is how
   `twoheadrightarrow` came to be written across a figure in place of an arrow.
+- The marks of a dashed curve that the curve follower does not reach. On
+  `waves1.png` 137 marks survive the straight-line finder as dash candidates,
+  the follower claims 46, and the other 91 are handed to the text grouper and
+  read: that is the whole of that figure's 10.2% of lost ink, and it is where
+  its invented labels come from too. Raising the follower's `maximum_gap`
+  claims them (46 marks at the current reach, 76 at 1.25x, 99 at 2x), and
+  cannot be done on its own: at any widened reach the interference figure's
+  tick-label fraction bars chain into one or two spurious curves. The
+  straight-line finder refuses those bars with its hemmed-in test, and that test
+  cannot simply be shared — it also discards two thirds of the genuine curve
+  marks on the two busiest figures, because a mark's own pen sits inside its
+  nearest probe. What is needed is a test that separates a bent run from a
+  straight one, since a straight run of dashes is the other finder's business
+  and has already been refused there.
 - Text on a curve, and text whose marks do not lie on a straight line.
 - A tinted area that is not outlined. Being outlined is what tells a printed
   tint from a stain on the scan, so an unbounded one is left alone rather than
