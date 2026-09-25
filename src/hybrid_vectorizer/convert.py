@@ -52,7 +52,7 @@ from .shapes import (
     region_path,
 )
 from .textlayout import Block, group_blocks, text_angle
-from .tracing import Trace, arrowheads_on, partition
+from .tracing import Trace, arrowheads_on, partition, trace_strokes
 
 
 @dataclass
@@ -357,6 +357,20 @@ def _harmonise(prepared: list[Prepared], text_height: float) -> None:
             entry.size = common
 
 
+def _draw_instead(analysis: Analysis, block: Block) -> None:
+    """Draw a refused block's marks rather than losing them.
+
+    A reading set six times the size of the page is a handful of stray marks
+    read as something, and setting it puts invented words across the figure. The
+    marks are still ink, though, and refusing the reading used to drop them: on
+    waves1.png that is the same marks going missing that the recogniser had just
+    invented a label out of. Trace them instead.
+    """
+    pen = analysis.page.stroke_width
+    for component in block.components:
+        analysis.traces.extend(trace_strokes(component, shortest=3.0 * pen))
+
+
 def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) -> list[ir.Element]:
     if fonts is None:
         return []
@@ -387,6 +401,7 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
                     "why": "type size out of family with the page",
                 }
             )
+            _draw_instead(analysis, block)
             continue
 
         prepared.append(
@@ -760,8 +775,10 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
     read_blocks(analysis, options)
     fonts, ranking = choose_fonts(analysis, options)
 
-    geometry, curve_notes = build_geometry(analysis, options)
+    # Labels first: a reading the page will not carry hands its block back to
+    # be drawn as the marks it is, and the geometry has to be built after that.
     labels = build_labels(analysis, fonts, options)
+    geometry, curve_notes = build_geometry(analysis, options)
     geometry, labels = group_legends(analysis, geometry, labels)
 
     page = analysis.page

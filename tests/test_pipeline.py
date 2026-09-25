@@ -1458,6 +1458,23 @@ class OutOfFamilyLabelTest(unittest.TestCase):
         self.assertTrue(labels, "real labels must survive")
         self.assertLess(len(analysis.rejected), self.blocks, "not everything is refused")
 
+    def test_the_marks_of_a_refused_reading_are_drawn_instead(self):
+        """Refusing the reading must not lose the ink it was read from."""
+        analysis, _labels = self._labelled(self.options)
+        self.assertTrue(analysis.rejected)
+
+        drawn = np.zeros(analysis.page.ink.shape, np.uint8)
+        for trace in analysis.traces:
+            points = np.asarray(trace.points, np.int32)
+            cv2.polylines(drawn, [points], False, 255, max(1, int(trace.stroke_width) + 2))
+
+        for entry in analysis.rejected:
+            x, y, width, height = (int(v) for v in entry["box"])
+            here = drawn[y : y + height, x : x + width]
+            self.assertTrue(
+                np.any(here), f"nothing drawn where {entry['reading']!r} was refused"
+            )
+
     def test_raising_the_limit_lets_them_through(self):
         from hybrid_vectorizer.convert import Options
 
