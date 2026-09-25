@@ -110,7 +110,9 @@ def analyse(path: Path, options: Options) -> Analysis:
     dashed, frames, traces, leftovers = partition(page, working, rules, ticks, text_height)
     blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
 
-    marker_sets, consumed = find_marker_sets(blocks, page.stroke_width)
+    marker_sets, consumed = find_marker_sets(
+        blocks, page.stroke_width, page_size=(page.width, page.height)
+    )
     claimed = {
         id(component)
         for index, block in enumerate(blocks)

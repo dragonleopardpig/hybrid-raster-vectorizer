@@ -326,9 +326,9 @@ should be.
 | figure | paper spread | blocks | note |
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
-| `waves1.png` | 0 | 33 | 0.90 recall, 0.89 precision; its dashed waves followed as curves |
+| `waves1.png` | 0 | 33 | 0.89 recall, 0.93 precision; its dashed waves followed as curves |
 | `thicklens_cascade.png` | 8 | 39 | 0.89 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.83 recall, 0.89 precision; the shaded slab read as a 12% tint |
+| `refraction.png` | 36 | 46 | 0.83 recall, 0.91 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 82 | 0.80 recall, 0.93 precision; heavy grain throughout |
 
 A broken line is allowed to lose a dash or two behind whatever it passes, so
@@ -355,6 +355,18 @@ ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
 the point of the 25-level gate.
 
 Shading as dark as the ink is not separable this way and is not attempted.
+
+A data marker is a shape; a dash is a stroke. Congruence cannot tell them apart,
+because a dash set at 45 degrees has a square bounding box, so a broken line that
+neither line finder claimed offers a dozen congruent squares. `waves1.png` was
+inventing three marker series from the marks of its own zigzags — 21 rings on a
+figure that has no data markers anywhere on it — and one of them reached into
+three axis labels and drew a ring in place of the `x` in each. What congruence
+cannot see the pen can: a dash is no thicker than the pen that drew it and solid
+along its length, which is the test the broken-line finder already applies.
+Refusing those took `waves1.png` from 0.893 precision to 0.928 and
+`refraction.png` from 0.886 to 0.911, and left the two generated figures, whose
+markers are real and known, reporting exactly the series they are drawn with.
 
 Recall is worth reading with care where areas are concerned. A sparse fill laid
 over a large part of the page coincidentally covers a great deal of ink, and one

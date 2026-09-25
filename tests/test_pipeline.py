@@ -1266,6 +1266,36 @@ class LensCascadeTest(unittest.TestCase):
         self.assertEqual(len(tints), 4)
 
 
+class StrokesAreNotMarkersTest(unittest.TestCase):
+    """A dash set at an angle has a square bounding box; it is still a dash."""
+
+    def _blocks(self, image):
+        from hybrid_vectorizer.components import extract
+        from hybrid_vectorizer.textlayout import Block
+
+        return [Block(components=[component]) for component in extract(image)]
+
+    def test_the_marks_of_a_slanted_broken_line_are_not_a_series(self):
+        from hybrid_vectorizer.shapes import find_marker_sets
+
+        image = np.zeros((600, 600), np.uint8)
+        for x, y in ((60, 80), (300, 140), (90, 420), (470, 300), (200, 520), (520, 500)):
+            cv2.line(image, (x, y), (x + 20, y + 20), 255, 6)
+        sets, used = find_marker_sets(self._blocks(image), 6.0, page_size=(600, 600))
+        self.assertEqual(sets, [], "six congruent dashes are a broken line, not data")
+        self.assertEqual(used, set())
+
+    def test_open_squares_of_the_same_size_still_are_a_series(self):
+        from hybrid_vectorizer.shapes import find_marker_sets
+
+        image = np.zeros((600, 600), np.uint8)
+        for x, y in ((60, 80), (300, 140), (90, 420), (470, 300), (200, 520), (520, 500)):
+            cv2.rectangle(image, (x, y), (x + 20, y + 20), 255, 6)
+        sets, _used = find_marker_sets(self._blocks(image), 6.0, page_size=(600, 600))
+        self.assertEqual(len(sets), 1)
+        self.assertEqual(len(sets[0].positions), 6)
+
+
 class NoRegressionTest(unittest.TestCase):
     """The stroke-only example must gain no areas and no marker series."""
 

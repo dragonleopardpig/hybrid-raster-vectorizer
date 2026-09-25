@@ -438,6 +438,7 @@ def find_marker_sets(
     blocks: list,
     stroke_width: float,
     *,
+    page_size: tuple[int, int] | None = None,
     minimum: int = 3,
     threshold: float = 0.75,
 ) -> tuple[list[MarkerSet], set[int]]:
@@ -447,13 +448,24 @@ def find_marker_sets(
     too, but it sits in a word with its neighbours, so grouping the page into
     labels first and looking only at the single-mark ones separates the two
     without needing a distance threshold to be tuned.
+
+    A mark the pen drew as a stroke is not a marker either. A dash set at 45
+    degrees has a square bounding box, so a broken line the line finders did not
+    claim offers a dozen congruent squares: waves1.png invented three series
+    from its zigzags, 21 rings on a figure with no data markers on it at all.
+    Congruence cannot see the difference; the pen can, because a dash is no
+    thicker than the pen that drew it and solid along its length.
     """
     from .consensus import similarity
+    from .dashes import is_dash
 
+    extent = page_size or (10**6, 10**6)
     singles = [
         (index, block.components[0])
         for index, block in enumerate(blocks)
-        if len(block.components) == 1 and block.components[0].area >= max(24.0, stroke_width**2)
+        if len(block.components) == 1
+        and block.components[0].area >= max(24.0, stroke_width**2)
+        and not is_dash(block.components[0], stroke_width, extent)
     ]
     if len(singles) < minimum:
         return [], set()
