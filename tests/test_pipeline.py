@@ -124,6 +124,30 @@ class PrimitiveTest(unittest.TestCase):
         for expected, found in zip(range(120, 700, 80), ticks.positions):
             self.assertAlmostEqual(found, expected, delta=2.0)
 
+    def test_marks_that_are_not_evenly_spaced_are_not_ticks(self):
+        """Ticks are a lattice; where a curve crosses an axis, the crossings are not."""
+        ink = blank()
+        cv2.line(ink, (40, 300), (760, 300), 255, 5)
+        for x in (120, 139, 300, 430, 447, 520):      # crossings, not a lattice
+            cv2.line(ink, (x, 300), (x, 330), 255, 5)
+        page = as_page(ink)
+        rules = detect_rules(page)
+        horizontal = next(rule for rule in rules if rule.orientation == "horizontal")
+        self.assertIsNone(detect_ticks(page, horizontal, others=rules))
+
+    def test_a_lattice_with_a_tick_missing_is_still_ticks(self):
+        """A gap where a tick was not printed is a multiple of the repeat."""
+        ink = blank()
+        cv2.line(ink, (40, 300), (760, 300), 255, 5)
+        for x in (120, 200, 280, 440, 520, 600):      # 360 is missing
+            cv2.line(ink, (x, 300), (x, 330), 255, 5)
+        page = as_page(ink)
+        rules = detect_rules(page)
+        horizontal = next(rule for rule in rules if rule.orientation == "horizontal")
+        ticks = detect_ticks(page, horizontal, others=rules)
+        self.assertIsNotNone(ticks)
+        self.assertAlmostEqual(ticks.spacing, 80.0, delta=2.0)
+
     def test_a_crossing_rule_is_not_mistaken_for_a_tick(self):
         ink = self._figure()
         cv2.line(ink, (400, 80), (400, 380), 255, 5)
@@ -1093,6 +1117,16 @@ class UnframedLegendTest(unittest.TestCase):
         self.assertEqual(len(legends[0].entries), 2)
         self.assertEqual(first.positions, [(120.0, 400.0)])
         self.assertEqual(second.positions, [(300.0, 420.0)])
+
+    def test_rows_spread_down_the_page_are_not_a_legend(self):
+        """Three subplots label the same thing at the same margin three times."""
+        from hybrid_vectorizer.legend import find_unframed
+
+        first = self._series([(600.0, 100.0), (120.0, 900.0)])
+        second = self._series([(600.0, 600.0), (300.0, 950.0)])
+        blocks = [self._block(620, 90, 70, 22), self._block(620, 590, 60, 22)]
+        self.assertEqual(find_unframed([first, second], blocks, 20.0), [])
+        self.assertEqual(len(first.positions), 2, "and its marks are left alone")
 
     def test_one_labelled_point_is_not_a_legend(self):
         from hybrid_vectorizer.legend import find_unframed

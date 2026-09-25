@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 from .components import Component
 from .shapes import Frame, MarkerSet
 
@@ -117,6 +119,7 @@ def find_unframed(
     text_height: float,
     *,
     minimum_rows: int = 2,
+    stacked: float = 4.0,
 ) -> list[Legend]:
     """Find a legend drawn without a box, by the shape of its rows.
 
@@ -124,6 +127,12 @@ def find_unframed(
     the axes. What a legend always is, and a scattered annotation never is, is
     several rows lined up — the samples sharing a column, each with its name
     immediately to the right, and the names starting at a common margin.
+
+    And the rows are lines of text, one under the next. Three subplots of the
+    same figure put the same label at the same margin three times over, which
+    answers every other question here: on waves1.png that read as a legend 1052
+    pixels tall, on a page whose type is 21. A drawn legend's rows sit about two
+    line heights apart.
     """
     if not marker_sets or len(blocks) < minimum_rows:
         return []
@@ -167,6 +176,10 @@ def find_unframed(
         # The names of a legend start at one margin; scattered labels do not.
         margins = [blocks[block].x for _s, _p, _c, block in column]
         if max(margins) - min(margins) > text_height:
+            continue
+        # And its rows are lines, not a column of annotations down the page.
+        rows = sorted(position[1] for _s, position, _c, _b in column)
+        if max(np.diff(rows)) > stacked * text_height:
             continue
 
         legend = Legend(frame=None)

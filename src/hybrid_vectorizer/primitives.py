@@ -266,6 +266,7 @@ def detect_ticks(
     others: list[Rule] | None = None,
     reach_factor: float = 7.0,
     snap_tolerance: float = 0.15,
+    least_confidence: float = 0.5,
 ) -> TickSet | None:
     source = page.ink if ink is None else ink
     ink = source if rule.orientation == "horizontal" else _transpose(source)
@@ -354,6 +355,15 @@ def detect_ticks(
         confidence = float(np.clip(1.0 - relative / snap_tolerance, 0.3, 1.0))
         if relative <= snap_tolerance:
             positions, residual = _snap(positions, spacing)
+
+    # Ticks are evenly spaced by definition, and this was measuring how evenly
+    # and then reporting it rather than acting on it. Where a curve crosses an
+    # axis three or four times the crossings pass every other test a tick set
+    # has, and were drawn as ticks. A real set fits a lattice at 0.75 or better
+    # -- including one on the interference scan with ticks missing, and one on
+    # waves1.png spaced three apart -- and a false one sits on the floor at 0.3.
+    if confidence < least_confidence:
+        return None
 
     # Marks are uniform, so one measured extent per side describes them all.
     near = float(np.median([item[1] for item in sides["near"]])) if sides["near"] else float(low)
