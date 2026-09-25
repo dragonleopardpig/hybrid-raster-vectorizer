@@ -260,10 +260,11 @@ def _block_ink(page: Page, block: Block, angle: float | None = None) -> np.ndarr
     window = mask[block.y : block.bottom, block.x : block.right]
     if angle is None:
         return window
-    # Size and score a turned label against ink turned the same way.
+    # Size and score a turned label against ink turned the same way. This is a
+    # mask, so its empty is black.
     from .ocr import turned
 
-    return turned(window, angle)
+    return turned(window, angle, background=0)
 
 
 def _ink_extent(image: np.ndarray) -> tuple[int, int]:

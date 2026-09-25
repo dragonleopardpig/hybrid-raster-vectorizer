@@ -1266,6 +1266,32 @@ class LensCascadeTest(unittest.TestCase):
         self.assertEqual(len(tints), 4)
 
 
+class TurningAMaskTest(unittest.TestCase):
+    """Turning grows the canvas; what it grows into must be empty, not ink."""
+
+    def _slanted(self):
+        image = np.zeros((160, 160), np.uint8)
+        cv2.line(image, (30, 120), (130, 30), 255, 6)      # a mark set at -45
+        return image
+
+    def test_the_corners_it_grows_into_are_not_counted_as_ink(self):
+        from hybrid_vectorizer.convert import _ink_extent
+        from hybrid_vectorizer.ocr import turned
+
+        upright = turned(self._slanted(), -45.0, background=0)
+        width, height = _ink_extent(upright)
+        self.assertGreater(width, 3 * height, "a mark turned upright is long and thin")
+        self.assertLess(height, 40)
+
+    def test_a_recogniser_crop_still_keeps_its_white_page(self):
+        from hybrid_vectorizer.ocr import turned
+
+        crop = np.full((160, 160), 255, np.uint8)
+        cv2.line(crop, (30, 120), (130, 30), 0, 6)
+        grown = turned(crop, -45.0)
+        self.assertEqual(int(grown[0, 0]), 255, "the page a crop is turned on stays white")
+
+
 class CrossingStrokesTest(unittest.TestCase):
     """Where a drawing's strokes cross they are one component, not one stroke."""
 

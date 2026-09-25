@@ -54,11 +54,17 @@ def isolate(
     return cv2.copyMakeBorder(window, 16, 16, 16, 16, cv2.BORDER_CONSTANT, value=255)
 
 
-def turned(image: np.ndarray, angle: float) -> np.ndarray:
+def turned(image: np.ndarray, angle: float, background: int = 255) -> np.ndarray:
     """Turn a crop upright, given the angle its text is set at.
 
     The canvas is grown to hold the corners, so a label set on a slope is not
     clipped by the box it arrived in.
+
+    The corners it is grown into have to be filled with whatever this image
+    calls empty. A recogniser's crop is black on white and wants white; an ink
+    mask is white on black and, given white, reads its own padding as ink. That
+    measured a slanted label's ink as the whole of the grown canvas and set it
+    at 65px on a page whose type is 25.
     """
     if abs(angle % 360.0) < 1e-6:
         return image
@@ -71,7 +77,7 @@ def turned(image: np.ndarray, angle: float) -> np.ndarray:
     matrix[1, 2] += grown_height / 2.0 - height / 2.0
     return cv2.warpAffine(
         image, matrix, (grown_width, grown_height),
-        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=255,
+        flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_CONSTANT, borderValue=background,
     )
 
 

@@ -330,8 +330,8 @@ should be.
 
 | figure | paper spread | blocks | note |
 |---|---|---|---|
-| `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
-| `waves1.png` | 0 | 33 | 0.91 recall, 0.93 precision; its dashed waves followed as curves |
+| `complex.png` | 8 | 8 | clean; ink agreement 0.92 recall, 0.91 precision; every label read correctly |
+| `waves1.png` | 0 | 33 | 0.92 recall, 0.92 precision; its dashed waves followed as curves |
 | `thicklens_cascade.png` | 8 | 39 | 0.95 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
 | `refraction.png` | 36 | 46 | 0.89 recall, 0.92 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 82 | 0.96 recall, 0.94 precision; heavy grain and show-through throughout |
@@ -420,8 +420,18 @@ which is what the drawing was actually reproducing all along.
 Every label on that figure now reads correctly — `Imaginary`, `Real`,
 `y = A sin φ`, `x = A cos φ`, `A = |z|` and `Fig. 1-6` — as do both axes, both
 broken lines and the vector. Precision fell from 0.899 to 0.866 along the way,
-because those words are now set in an installed face rather than traced as the
-shapes they actually are, which is the trade the whole project makes.
+which was put down to those words being set in an installed face rather than
+traced as the shapes they are, the trade the whole project makes.
+
+Most of it was not that. Turning a label upright grows the canvas to hold the
+corners, and filled them with white, which is right for a recogniser's crop and
+wrong for an ink mask, where white is ink. A label set on a slope therefore
+measured as the whole of its grown canvas: `A = |z|` was set at 65px on a page
+whose type is 25, and its own shape score of 0.08 — against 0.20 to 0.47 for
+every other label — said so all along. Filling with what the image calls empty
+takes the figure to 0.919 recall and 0.907 precision, and that label from a
+0.42 reading at 65px to a 0.55 reading at 44px. The font trade is real, but it
+was worth about a third of what it was charged with.
 
 ## Still missing
 
