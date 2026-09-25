@@ -497,6 +497,21 @@ was worth about a third of what it was charged with.
   3px, so both maps improve while the 3px score does not, and one run still
   stitches across a trough. A monotonic-progress test does not catch that one:
   every run already advances, the worst backward step being 0.2% of its span.
+- A stroke whose ink changes thickness along its length. One pen is chosen per
+  stroke and on a steadily drawn figure it is right: the median matches the ink
+  to within a twentieth on every scan here. On the two stained ones a stroke is
+  half again as thick in places as at its thin tenth, and the constant pen
+  paints past the ink wherever it thins. That is 73% of what `wavefront.png`
+  invents, the labels being the other 27% and everything else — areas, axes,
+  broken lines — none of it.
+
+  Narrowing every pen by a seventh fixes that figure, 0.936 precision to 0.946,
+  and spoils the clean ones, for no change in the mean: the instrument is wrong,
+  not the diagnosis. Splitting a stroke into stretches of even thickness is the
+  right shape of answer and was tried; it fragments arrows, whose heads are
+  genuinely thicker than their shafts, and the vector on `complex.png` came back
+  in five pieces. What is needed is a stroke drawn as an outline that follows
+  the ink's own width, which is a different thing to draw than a stroked path.
 - Text on a curve, and text whose marks do not lie on a straight line.
 - A tinted area that is not outlined. Being outlined is what tells a printed
   tint from a stain on the scan, so an unbounded one is left alone rather than
