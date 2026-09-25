@@ -346,7 +346,18 @@ def _merge_runs(items: list) -> list:
     return merged
 
 
-def to_svg(box: Box, x: float, baseline: float, *, indent: str = "    ") -> list[str]:
+def to_svg(
+    box: Box, x: float, baseline: float, *, indent: str = "    ", spread: float = 1.0
+) -> list[str]:
+    """Write the laid-out box, optionally set to a measured width.
+
+    `spread` scales where each glyph sits, never how big it is. The face in hand
+    is not the face on the page, so a run set with its own advances ends short
+    of the printed one and the last letter of a label lands a glyph behind --
+    which is where most of what complex.png failed to reproduce turned out to
+    be. Stretching the spacing puts every glyph back over its own ink;
+    stretching the glyphs would make them a face nobody cut.
+    """
     def number(value: float) -> str:
         return f"{value:.2f}".rstrip("0").rstrip(".") or "0"
 
@@ -354,13 +365,14 @@ def to_svg(box: Box, x: float, baseline: float, *, indent: str = "    ") -> list
     for bar in box.bars:
         lines.append(
             f'{indent}<path class="fraction-line" '
-            f'd="M{number(x + bar.x)} {number(baseline + bar.y)}h{number(bar.width)}" '
+            f'd="M{number(x + spread * bar.x)} {number(baseline + bar.y)}'
+            f'h{number(spread * bar.width)}" '
             f'stroke-width="{number(bar.thickness)}"/>'
         )
     for glyph in box.glyphs:
         style = "upright" if glyph.upright else "italic"
         lines.append(
-            f'{indent}<text class="glyph {style}" x="{number(x + glyph.x)}" '
+            f'{indent}<text class="glyph {style}" x="{number(x + spread * glyph.x)}" '
             f'y="{number(baseline + glyph.y)}" font-size="{number(glyph.size)}">'
             f"{html.escape(glyph.text)}</text>"
         )

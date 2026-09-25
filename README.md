@@ -267,7 +267,17 @@ Font matching ranks installed families against confidently-read prose. On the
 example it picks TeX Gyre Bonum at a score of 0.53 — a weak match, reported as
 such. Use `--font` to override it.
 
-Improving it is not worth much. Every installed family and weight was scored by
+A run is set to the width that was measured, not to the width its own advances
+come to. The face in hand is not the face on the page, so the two differ by
+something like a tenth — `x+iy` occupies 103px of `complex.png` and set to 84 —
+and the error accumulates along the run until the last letter of a label lands a
+glyph behind its ink. That was most of what that figure failed to reproduce: the
+`y` of `Imaginary`, the `y` of `x+iy`, the `φ` of both `A sin φ` and `A cos φ`.
+Only the spacing is stretched, never the glyphs, and the stretch is bounded, so
+a wrong reading cannot run away with it. That is worth 0.014 recall and 0.012
+precision on `complex.png` and a little on five of the other seven.
+
+Improving the choice of face is not worth much. Every installed family and weight was scored by
 rendering the whole page and measuring it against the scan: 578 combinations
 span 1.80 to 1.95 on recall plus precision, and the top ten sit within 0.005 of
 each other, with monospaced icon fonts among them. The text that is already read
@@ -330,8 +340,8 @@ should be.
 
 | figure | paper spread | blocks | note |
 |---|---|---|---|
-| `complex.png` | 8 | 8 | clean; ink agreement 0.92 recall, 0.91 precision; every label read correctly |
-| `waves1.png` | 0 | 33 | 0.96 recall, 0.95 precision; its dashed waves followed as curves |
+| `complex.png` | 8 | 8 | clean; ink agreement 0.93 recall, 0.92 precision; every label read correctly |
+| `waves1.png` | 0 | 33 | 0.97 recall, 0.95 precision; its dashed waves followed as curves |
 | `thicklens_cascade.png` | 8 | 39 | 0.97 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
 | `refraction.png` | 36 | 46 | 0.93 recall, 0.93 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 82 | 0.97 recall, 0.94 precision; heavy grain and show-through throughout |

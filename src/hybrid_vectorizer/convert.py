@@ -500,6 +500,20 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         score = shape_iou(measured, rendered) if rendered is not None else entry.score
         confidence = float(np.clip(0.35 + 0.9 * score, 0.0, 0.99))
 
+        # The face in hand is not the face on the page, so a run set with its
+        # own advances ends short of the printed one: on complex.png the last
+        # letter of nearly every label was landing a glyph behind its ink.
+        # Spacing is stretched to the width that was measured, glyph sizes are
+        # not, and the stretch is bounded so a wrong reading cannot run away.
+        spread = 1.0
+        if rendered is not None:
+            ink_width = _ink_extent(measured)[0]
+            set_width = _ink_extent(rendered)[0]
+            if ink_width > 0 and set_width > 0:
+                spread = float(np.clip(ink_width / set_width, 0.75, 1.3))
+        if entry.pure_fraction and block.bars:
+            x -= 0.5 * (spread - 1.0) * box.width
+
         if confidence < options.confidence_threshold and options.raster_fallback:
             alpha = _block_ink(page, block)
             black = np.zeros_like(alpha)
@@ -534,6 +548,7 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
                 plain=tex.to_text(node),
                 engine=entry.reading.engine,
                 transform=entry.transform,
+                spread=spread,
             )
         )
         entry.score = score

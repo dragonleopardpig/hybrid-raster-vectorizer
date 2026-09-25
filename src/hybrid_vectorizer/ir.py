@@ -362,6 +362,7 @@ class Label(Element):
     plain: str = ""
     engine: str = ""
     transform: str = ""
+    spread: float = 1.0
 
     def to_svg(self, indent: str) -> list[str]:
         if self.box is None:
@@ -374,7 +375,9 @@ class Label(Element):
         placement = f' transform="{_attribute(self.transform)}"' if self.transform else ""
         origin = (0.0, 0.0) if self.transform else (self.x, self.baseline)
         lines = [f'{indent}<g class="label" {self.attributes()}{source}{engine}{aria}{placement}>']
-        lines.extend(tex.to_svg(self.box, origin[0], origin[1], indent=indent + "  "))
+        lines.extend(
+            tex.to_svg(self.box, origin[0], origin[1], indent=indent + "  ", spread=self.spread)
+        )
         lines.append(f"{indent}</g>")
         return lines
 
