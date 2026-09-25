@@ -68,6 +68,8 @@ class Options:
     background: str | None = None
     ensemble: int = 1
     largest_label: float = 3.5
+    doubtful_label: float = 2.4
+    doubtful_shape: float = 0.20
     font_family: str | None = None
     font_candidates: int = 400
     use_formula_ocr: bool = True
@@ -392,12 +394,21 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         # the page is not a line of text. These are stray marks -- a tick, a
         # dash, a speck -- grouped together and then read as something, and
         # drawing the answer puts large invented words across the figure.
-        if size > options.largest_label * analysis.text_height:
+        # Size alone cannot settle this. The largest label on the generated
+        # series figure is a tick reading 2.8 times the page's type and it is
+        # real; the largest on waves1.png is the same multiple and is a dozen
+        # zigzag dashes read as "r=2". What separates them is whether the
+        # setting looks anything like the ink: the real ones score 0.42 to 0.58
+        # on shape, the invented ones 0.00 to 0.19.
+        outsized = size > options.doubtful_label * analysis.text_height
+        unlike = score < options.doubtful_shape
+        if size > options.largest_label * analysis.text_height or (outsized and unlike):
             analysis.rejected.append(
                 {
                     "box": [block.x, block.y, block.width, block.height],
                     "reading": reading.text,
                     "size_px": round(size, 1),
+                    "shape_score": round(score, 2),
                     "why": "type size out of family with the page",
                 }
             )

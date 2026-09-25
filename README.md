@@ -331,9 +331,9 @@ should be.
 | figure | paper spread | blocks | note |
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.92 recall, 0.91 precision; every label read correctly |
-| `waves1.png` | 0 | 33 | 0.95 recall, 0.92 precision; its dashed waves followed as curves |
-| `thicklens_cascade.png` | 8 | 39 | 0.96 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.92 recall, 0.92 precision; the shaded slab read as a 12% tint |
+| `waves1.png` | 0 | 33 | 0.96 recall, 0.95 precision; its dashed waves followed as curves |
+| `thicklens_cascade.png` | 8 | 39 | 0.97 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
+| `refraction.png` | 36 | 46 | 0.93 recall, 0.93 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 82 | 0.97 recall, 0.94 precision; heavy grain and show-through throughout |
 
 A broken line is allowed to lose a dash or two behind whatever it passes, so

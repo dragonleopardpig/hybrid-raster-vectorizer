@@ -1452,11 +1452,28 @@ class OutOfFamilyLabelTest(unittest.TestCase):
     def test_a_reading_needing_outsized_type_is_not_drawn(self):
         analysis, labels = self._labelled(self.options)
         self.assertTrue(analysis.rejected, "sparse scatters should be refused")
+        outright = self.options.largest_label * analysis.text_height
+        doubtful = self.options.doubtful_label * analysis.text_height
+        for entry in analysis.rejected:
+            if entry["size_px"] > outright:
+                continue
+            self.assertGreater(entry["size_px"], doubtful, "refused but not outsized")
+            self.assertLess(
+                entry["shape_score"], self.options.doubtful_shape,
+                "an outsized reading that does look like its ink is kept",
+            )
+        self.assertTrue(labels, "real labels must survive")
+        self.assertLess(len(analysis.rejected), self.blocks, "not everything is refused")
+
+    def test_an_outsized_reading_that_matches_its_ink_is_kept(self):
+        """Size alone does not settle it: a tick label can be large and real."""
+        from hybrid_vectorizer.convert import Options
+
+        analysis, labels = self._labelled(Options(doubtful_shape=0.0))
         limit = self.options.largest_label * analysis.text_height
         for entry in analysis.rejected:
             self.assertGreater(entry["size_px"], limit)
-        self.assertTrue(labels, "real labels must survive")
-        self.assertLess(len(analysis.rejected), self.blocks, "not everything is refused")
+        self.assertTrue(labels)
 
     def test_the_marks_of_a_refused_reading_are_drawn_instead(self):
         """Refusing the reading must not lose the ink it was read from."""
@@ -1478,14 +1495,16 @@ class OutOfFamilyLabelTest(unittest.TestCase):
     def test_raising_the_limit_lets_them_through(self):
         from hybrid_vectorizer.convert import Options
 
-        analysis, labels = self._labelled(Options(largest_label=1000.0))
+        analysis, labels = self._labelled(
+            Options(largest_label=1000.0, doubtful_label=1000.0)
+        )
         self.assertEqual(analysis.rejected, [])
         self.assertEqual(len(labels), self.blocks)
 
     def test_what_is_refused_is_reported(self):
         analysis, _labels = self._labelled(self.options)
         entry = analysis.rejected[0]
-        self.assertEqual(sorted(entry), ["box", "reading", "size_px", "why"])
+        self.assertEqual(sorted(entry), ["box", "reading", "shape_score", "size_px", "why"])
         self.assertEqual(len(entry["box"]), 4)
 
 
