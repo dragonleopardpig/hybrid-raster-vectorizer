@@ -172,45 +172,82 @@ def _trace_axis(mask: np.ndarray, origin: tuple[int, int], *, by_column: bool, l
 _NEIGHBOURS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
 
 
-def _trace_skeleton(mask: np.ndarray, origin: tuple[int, int]) -> np.ndarray | None:
-    """Longest path through the medial axis, for strokes that are not functions."""
+def _covered_by(component: Component, points: np.ndarray, pen: float, least: float = 0.85) -> bool:
+    """Does this one stroke actually draw the component it stands for?
+
+    A stroke that runs as a function of one axis is found a column at a time,
+    which cannot see a second arm: a plus sign comes back as its crossbar alone
+    and a tee as a bar that never reaches the stem. Asking what the stroke
+    covers catches that without having to guess from the shape.
+    """
+    canvas = np.zeros((component.height, component.width), np.uint8)
+    local = np.asarray(points, dtype=np.int32) - np.array([component.x, component.y], np.int32)
+    cv2.polylines(canvas, [local], False, 255, max(1, int(round(pen)) + 2))
+    drawn = int(np.count_nonzero(cv2.bitwise_and(canvas, component.mask)))
+    return drawn >= least * max(1, int(np.count_nonzero(component.mask)))
+
+
+def _skeleton_strokes(
+    mask: np.ndarray, origin: tuple[int, int], shortest: float
+) -> list[np.ndarray]:
+    """Every long stroke in the medial axis, not only the longest.
+
+    Where a drawing's strokes cross they are one component, and the longest path
+    through it is one stroke of however many were drawn. On wavefront.png the
+    sine, the two arrows, the axes and five plane outlines meet at 709
+    junctions in a single component, and taking the longest path threw away half
+    of its ink -- 77% of everything that figure failed to reproduce.
+
+    The longest path is taken as before, then lifted out, which leaves the rest
+    of the skeleton in pieces to be taken the same way. A piece shorter than the
+    pen can reach is a spur of the stain, not a stroke, and is dropped.
+    """
     skeleton = skeletonize(mask > 0)
     pixels = {(int(y), int(x)) for y, x in zip(*np.nonzero(skeleton))}
     if len(pixels) < 2:
-        return None
+        return []
 
-    def neighbours(node: tuple[int, int]) -> list[tuple[int, int]]:
+    def neighbours(node, within):
         y, x = node
-        return [(y + dy, x + dx) for dy, dx in _NEIGHBOURS if (y + dy, x + dx) in pixels]
+        return [(y + dy, x + dx) for dy, dx in _NEIGHBOURS if (y + dy, x + dx) in within]
 
-    def farthest(source: tuple[int, int]) -> tuple[tuple[int, int], dict]:
+    def sweep(source, within):
         previous = {source: None}
         queue = [source]
         last = source
         while queue:
             node = queue.pop(0)
             last = node
-            for candidate in neighbours(node):
+            for candidate in neighbours(node, within):
                 if candidate not in previous:
                     previous[candidate] = node
                     queue.append(candidate)
         return last, previous
 
-    endpoints = [node for node in pixels if len(neighbours(node)) == 1]
-    seed = endpoints[0] if endpoints else next(iter(pixels))
-    far, _ = farthest(seed)
-    other, previous = farthest(far)
-
-    path: list[tuple[int, int]] = []
-    node: tuple[int, int] | None = other
-    while node is not None:
-        path.append(node)
-        node = previous[node]
-    if len(path) < 2:
-        return None
-
     x_offset, y_offset = origin
-    return np.array([[x + x_offset, y + y_offset] for y, x in path], dtype=float)
+    strokes: list[np.ndarray] = []
+    while pixels:
+        seed = next(iter(pixels))
+        _reached, seen = sweep(seed, pixels)
+        chunk = set(seen)
+        pixels -= chunk
+        if len(chunk) < shortest:
+            continue
+        ends = [node for node in chunk if len(neighbours(node, chunk)) == 1]
+        start = ends[0] if ends else next(iter(chunk))
+        far, _ = sweep(start, chunk)
+        other, previous = sweep(far, chunk)
+        path = []
+        node = other
+        while node is not None:
+            path.append(node)
+            node = previous[node]
+        if len(path) < max(2, int(shortest)):
+            continue
+        strokes.append(np.array([[x + x_offset, y + y_offset] for y, x in path], dtype=float))
+        # What the stroke did not cover is still skeleton, and still ink.
+        pixels |= chunk - set(path)
+    return strokes
 
 
 def _across(ink: np.ndarray, point: np.ndarray, normal: np.ndarray, limit: int) -> int:
@@ -282,26 +319,37 @@ def component_stroke_width(component: Component) -> float:
 
 
 def trace_component(component: Component, *, multi_run_limit: float = 0.15) -> Trace | None:
+    """The one stroke that best stands for this component."""
+    strokes = trace_strokes(component, multi_run_limit=multi_run_limit, shortest=0.0)
+    return strokes[0] if strokes else None
+
+
+def trace_strokes(
+    component: Component, *, multi_run_limit: float = 0.15, shortest: float = 0.0
+) -> list[Trace]:
+    """Every stroke this component was drawn with.
+
+    A stroke that runs as a function of one axis is one stroke by construction.
+    Anything else is walked along its medial axis, which may hold several.
+    """
     origin = (component.x, component.y)
+    pen = component_stroke_width(component)
     for by_column in (True, False):
         points = _trace_axis(component.mask, origin, by_column=by_column, limit=multi_run_limit)
-        if points is not None and points.shape[0] >= 2:
-            return Trace(
-                points=points,
-                stroke_width=component_stroke_width(component),
-                components=[component],
-                method="column" if by_column else "row",
-            )
+        if points is not None and points.shape[0] >= 2 and _covered_by(component, points, pen):
+            return [
+                Trace(
+                    points=points,
+                    stroke_width=pen,
+                    components=[component],
+                    method="column" if by_column else "row",
+                )
+            ]
 
-    points = _trace_skeleton(component.mask, origin)
-    if points is None or points.shape[0] < 2:
-        return None
-    return Trace(
-        points=points,
-        stroke_width=component_stroke_width(component),
-        components=[component],
-        method="skeleton",
-    )
+    return [
+        Trace(points=points, stroke_width=pen, components=[component], method="skeleton")
+        for points in _skeleton_strokes(component.mask, origin, max(2.0, shortest))
+    ]
 
 
 def chain(traces: list[Trace], *, maximum_gap: float) -> list[Trace]:
@@ -498,9 +546,9 @@ def partition(
             continue
         graphic = is_graphic(component, text_height, page.stroke_width)
         if graphic and not looks_like_text(component, text_height):
-            trace = trace_component(component)
-            if trace is not None:
-                traces.append(trace)
+            drawn = trace_strokes(component, shortest=3.0 * page.stroke_width)
+            if drawn:
+                traces.extend(drawn)
                 continue
         leftovers.append(component)
 

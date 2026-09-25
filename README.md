@@ -271,9 +271,14 @@ Improving it is not worth much. Every installed family and weight was scored by
 rendering the whole page and measuring it against the scan: 578 combinations
 span 1.80 to 1.95 on recall plus precision, and the top ten sit within 0.005 of
 each other, with monospaced icon fonts among them. The text that is already read
-correctly is what caps agreement — on all four scans the unreproduced ink is a
-long tail of glyph-sized clusters, not a missing feature — and no choice of
-installed face closes that gap.
+correctly is what caps agreement on the figures that are mostly text, and no
+choice of installed face closes that gap.
+
+It does not cap the others, and saying that it did was wrong. The claim was
+that on every scan the unreproduced ink is a long tail of glyph-sized clusters
+rather than a missing feature. On `wavefront.png` it was three regions holding
+73.8% of the loss between them, and it was a missing feature: see below. Group
+the lost ink into clusters and read the sizes before concluding it is a tail.
 
 ## Reproduce
 
@@ -326,10 +331,10 @@ should be.
 | figure | paper spread | blocks | note |
 |---|---|---|---|
 | `complex.png` | 8 | 8 | clean; ink agreement 0.91 recall, 0.87 precision; every label read correctly |
-| `waves1.png` | 0 | 33 | 0.89 recall, 0.93 precision; its dashed waves followed as curves |
-| `thicklens_cascade.png` | 8 | 39 | 0.89 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.83 recall, 0.91 precision; the shaded slab read as a 12% tint |
-| `wavefront.png` | 60 | 82 | 0.80 recall, 0.93 precision; heavy grain throughout |
+| `waves1.png` | 0 | 33 | 0.91 recall, 0.93 precision; its dashed waves followed as curves |
+| `thicklens_cascade.png` | 8 | 39 | 0.95 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
+| `refraction.png` | 36 | 46 | 0.89 recall, 0.92 precision; the shaded slab read as a 12% tint |
+| `wavefront.png` | 60 | 82 | 0.96 recall, 0.94 precision; heavy grain and show-through throughout |
 
 A broken line is allowed to lose a dash or two behind whatever it passes, so
 that it still reads as one line rather than as two. It used then to be drawn as
@@ -355,6 +360,34 @@ ink to 7.1%, its regions from 12 to 4 and its blocks from 273 to 154, and cut
 the point of the 25-level gate.
 
 Shading as dark as the ink is not separable this way and is not attempted.
+
+Where a drawing's strokes cross, they are one component. A stroke was found by
+walking that component once, so a component drawn with several strokes came back
+as one of them and the rest was dropped. On `wavefront.png` the sine, the two
+arrows, the axes and five plane outlines meet at 709 junctions in a single
+component: half of that component's ink was never drawn, which was 77% of
+everything the figure failed to reproduce, and the loss read as a long tail of
+glyph-sized clusters only because nobody had grouped it. The longest path is now
+lifted out and the rest of the skeleton walked the same way, until what is left
+is shorter than the pen can reach and is a spur of the stain rather than a
+stroke.
+
+A stroke that runs as a function of one axis is still found a column at a time,
+which is faster and follows a drawn curve better. That method cannot see a
+second arm, though — a plus sign comes back as its crossbar and a tee as a bar
+that never reaches the stem — so the stroke it proposes has to cover at least
+85% of the component it stands for, or the component is walked instead.
+
+| figure | recall | precision |
+|---|---|---|
+| `wavefront.png` | 0.802 → **0.959** | 0.925 → 0.935 |
+| `thicklens_cascade.png` | 0.893 → **0.945** | 0.958 |
+| `refraction.png` | 0.829 → **0.888** | 0.911 → 0.920 |
+| `waves1.png` | 0.890 → **0.911** | 0.928 → 0.930 |
+
+`complex.png`, the interference scan and both generated figures do not move:
+nothing on them is drawn with crossing strokes. Across the eight, mean recall
+goes from 0.903 to 0.939 and mean precision from 0.939 to 0.941.
 
 A data marker is a shape; a dash is a stroke. Congruence cannot tell them apart,
 because a dash set at 45 degrees has a square bounding box, so a broken line that

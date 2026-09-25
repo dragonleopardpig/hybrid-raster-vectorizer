@@ -1266,6 +1266,45 @@ class LensCascadeTest(unittest.TestCase):
         self.assertEqual(len(tints), 4)
 
 
+class CrossingStrokesTest(unittest.TestCase):
+    """Where a drawing's strokes cross they are one component, not one stroke."""
+
+    def _component(self, image):
+        from hybrid_vectorizer.components import extract
+
+        return max(extract(image), key=lambda c: c.area)
+
+    def test_a_cross_is_drawn_with_both_of_its_strokes(self):
+        from hybrid_vectorizer.tracing import trace_strokes
+
+        image = np.zeros((400, 400), np.uint8)
+        cv2.line(image, (40, 200), (360, 200), 255, 5)
+        cv2.line(image, (200, 40), (200, 360), 255, 5)
+        strokes = trace_strokes(self._component(image), shortest=15.0)
+
+        self.assertGreaterEqual(len(strokes), 2)
+        reach = sorted(
+            float(np.ptp(s.points[:, 0])) + float(np.ptp(s.points[:, 1])) for s in strokes
+        )
+        self.assertGreater(reach[-1], 300, "the long arm is one stroke")
+        self.assertGreater(reach[-2], 300, "and so is the other")
+
+    def test_a_single_stroke_is_still_one_stroke(self):
+        from hybrid_vectorizer.tracing import trace_strokes
+
+        image = np.zeros((400, 400), np.uint8)
+        cv2.line(image, (40, 200), (360, 200), 255, 5)
+        self.assertEqual(len(trace_strokes(self._component(image), shortest=15.0)), 1)
+
+    def test_a_spur_shorter_than_the_pen_reaches_is_not_a_stroke(self):
+        from hybrid_vectorizer.tracing import trace_strokes
+
+        image = np.zeros((400, 400), np.uint8)
+        cv2.line(image, (40, 200), (360, 200), 255, 5)
+        cv2.line(image, (200, 200), (200, 208), 255, 5)   # a speck of dirt on it
+        self.assertEqual(len(trace_strokes(self._component(image), shortest=40.0)), 1)
+
+
 class StrokesAreNotMarkersTest(unittest.TestCase):
     """A dash set at an angle has a square bounding box; it is still a dash."""
 

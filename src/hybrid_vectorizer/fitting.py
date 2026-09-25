@@ -50,12 +50,18 @@ def fit_polynomial(x: np.ndarray, y: np.ndarray, degree: int) -> Polynomial | No
     thousands raises x to the fifteenth power inside the normal equations, which
     numpy rightly calls poorly conditioned. Moving x to roughly [-1, 1] first
     costs nothing and makes the fit mean what it says.
+
+    A curve of degree d also needs d + 1 abscissae that differ. A stroke
+    standing on end offers one, however many points are on it, and no amount of
+    scaling makes that fit anything: it is refused rather than fitted badly.
     """
     if x.size <= degree + 1:
         return None
     centre = float(np.mean(x))
     scale = float(np.max(np.abs(x - centre))) or 1.0
     reduced = (x - centre) / scale
+    if np.unique(np.round(reduced, 6)).size <= degree + 1:
+        return None
 
     coefficients = np.polyfit(reduced, y, degree)
     residual = np.polyval(coefficients, reduced) - y
