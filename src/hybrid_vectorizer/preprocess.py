@@ -7,6 +7,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from skimage.filters import threshold_sauvola
 from skimage.morphology import skeletonize
 
 
@@ -129,14 +130,39 @@ def flatten(gray: np.ndarray, *, minimum_spread: int = 25) -> tuple[np.ndarray, 
     return np.clip(scaled * 255.0, 0, 255).astype(np.uint8), spread
 
 
-def _binarise(gray: np.ndarray) -> np.ndarray:
-    _threshold, binary = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU
-    )
-    if float(np.count_nonzero(binary)) > 0.5 * binary.size:
-        # Otsu picked the wrong side: the figure is light ink on a dark ground.
-        binary = 255 - binary
-    return binary
+def _binarise(
+    gray: np.ndarray, window: int = 25, weight: float = 0.2, disagreement: float = 2.0
+) -> np.ndarray:
+    """Which pixels are ink, page-wide unless the page will not have it.
+
+    One threshold for the page cannot tell a figure that is genuinely dark from
+    one whose paper is stained, because both are dark over large areas. Measured
+    on this book: Otsu calls 42% of fig-7-17 ink where 2% of it is dark at all,
+    and 55% of fig-3-4 where 10% is -- and yet fig-1-12, whose concentric rings
+    really do cover 28% of the page, needs its 36%. Nothing about the page as a
+    whole separates those two cases.
+
+    Judged against the neighbourhood instead, the stained pages fall to 6.5% and
+    12% and the dense one keeps 34.6%: a stain is dark compared to the page and
+    pale compared to the line that crosses it. But judging every page that way
+    moves every edge by a pixel, which is a disturbance a clean scan has not
+    asked for. So the two are compared, and the neighbourhood is believed only
+    where they disagree outright -- which is where the page-wide one is wrong.
+    """
+    _level, page_wide = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    if float(np.count_nonzero(page_wide)) > 0.5 * page_wide.size:
+        page_wide = 255 - page_wide
+
+    local = threshold_sauvola(gray, window_size=window, k=weight)
+    nearby = np.where(gray < local, np.uint8(255), np.uint8(0))
+    if float(np.count_nonzero(nearby)) > 0.5 * nearby.size:
+        nearby = 255 - nearby
+
+    broad = float(np.count_nonzero(page_wide))
+    close = float(np.count_nonzero(nearby))
+    if broad > disagreement * max(close, 1.0):
+        return nearby
+    return page_wide
 
 
 def despeckle(ink: np.ndarray, minimum_area: int = 4, minimum_side: float = 0.0) -> np.ndarray:
