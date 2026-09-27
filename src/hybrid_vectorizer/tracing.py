@@ -495,6 +495,103 @@ def follow_dashed_curves(
     return curves
 
 
+def _straight(points: np.ndarray, tolerance: float):
+    """Direction, a point on it, and the run along it -- if these points are straight."""
+    if points.shape[0] < 2:
+        return None
+    centre = points.mean(axis=0)
+    centred = points - centre
+    _u, _s, vectors = np.linalg.svd(centred, full_matrices=False)
+    direction = vectors[0]
+    normal = np.array([-direction[1], direction[0]])
+    if float(np.abs(centred @ normal).max()) > tolerance:
+        return None
+    along = centred @ direction
+    return direction, centre, float(along.min()), float(along.max())
+
+
+def merge_collinear(traces: list[Trace], tolerance: float, reach: float) -> list[Trace]:
+    """Draw one line where the scan left several pieces of one.
+
+    A drawn line arrives in pieces: something crosses it, the paper is worn, the
+    skeleton forks around a blot. Each piece is then drawn as its own stroke,
+    which is why a figure of twenty strokes came back as seventy-two. Pieces
+    that lie along one line and follow one another along it are one line, and
+    are drawn as one.
+    """
+    straight: list[tuple[int, tuple]] = []
+    rest: list[Trace] = []
+    for index, trace in enumerate(traces):
+        found = _straight(trace.points, tolerance)
+        if found is None or trace.dash > 0:
+            rest.append(trace)
+        else:
+            straight.append((index, found))
+
+    used: set[int] = set()
+    merged: list[Trace] = []
+    for position, (index, (direction, centre, low, high)) in enumerate(straight):
+        if index in used:
+            continue
+        family = [(index, low, high)]
+        used.add(index)
+        normal = np.array([-direction[1], direction[0]])
+        for other_index, (other_direction, other_centre, other_low, other_high) in straight[position + 1:]:
+            if other_index in used:
+                continue
+            if abs(float(np.dot(direction, other_direction))) < 0.9995:
+                continue
+            offset = float(np.dot(other_centre - centre, normal))
+            if abs(offset) > tolerance:
+                continue
+            shift = float(np.dot(other_centre - centre, direction))
+            near, far = other_low + shift, other_high + shift
+            if min(far, high) < max(near, low) - reach:
+                continue
+            family.append((other_index, near, far))
+            used.add(other_index)
+            low, high = min(low, near), max(high, far)
+
+        pieces = [traces[i] for i, _n, _f in family]
+        if len(pieces) == 1:
+            merged.append(pieces[0])
+            continue
+        start, end = centre + low * direction, centre + high * direction
+        merged.append(
+            Trace(
+                points=np.array([start, end], dtype=float),
+                stroke_width=float(np.median([piece.stroke_width for piece in pieces])),
+                components=[c for piece in pieces for c in piece.components],
+                method=pieces[0].method,
+            )
+        )
+    return merged + rest
+
+
+def pen_set(widths: list[float], fallback: float, apart: float = 1.55) -> list[float]:
+    """The pen weights a drawing was made with, from the widths measured on it.
+
+    A figure is drawn with one pen, or two where something is emphasised. What
+    is measured instead is the thickness of each mark's own ink, which a scan
+    varies from stroke to stroke: one drawing came back in seven weights between
+    4 and 8, so a single line broken into pieces by the scan was redrawn thick
+    here and thin there. The measurements are grouped instead, and each group
+    lends its median to everything in it.
+    """
+    values = sorted(w for w in widths if w > 0)
+    if not values:
+        return [fallback]
+    light = float(np.median(values))
+    heavy = [w for w in values if w >= apart * light]
+    if len(heavy) < max(2, 0.1 * len(values)):
+        return [light]
+    return [float(np.median([w for w in values if w < apart * light])), float(np.median(heavy))]
+
+
+def nearest_pen(width: float, pens: list[float]) -> float:
+    return min(pens, key=lambda pen: abs(pen - width))
+
+
 def partition(
     page: Page,
     working: np.ndarray,

@@ -231,8 +231,8 @@ def _parser() -> argparse.ArgumentParser:
         help="Curve fit tolerance as a fraction of the pen width (default 0.25)",
     )
     convert_parser.add_argument(
-        "--idealise", action="store_true",
-        help="Redraw curves from the fitted analytic model instead of the traced ink",
+        "--trace-ink", dest="idealise", action="store_false",
+        help="Follow the scanned ink instead of redrawing each curve from the shape it fits",
     )
     convert_parser.add_argument(
         "--confidence", type=float, default=0.55, help="Below this, a label is flagged for review"

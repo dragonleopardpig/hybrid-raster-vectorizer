@@ -52,15 +52,17 @@ from .shapes import (
     region_path,
 )
 from .textlayout import Block, group_blocks, text_angle
-from .tracing import Trace, arrowheads_on, partition, trace_strokes
+from .tracing import (
+    Trace, arrowheads_on, merge_collinear, nearest_pen, partition, pen_set, trace_strokes,
+)
 
 
 @dataclass
 class Options:
     deskew: bool = True
-    bezier_tolerance: float = 0.25
+    bezier_tolerance: float = 0.9
     model_tolerance: float = 0.5
-    idealise: bool = False
+    idealise: bool = True
     confidence_threshold: float = 0.55
     raster_fallback: bool = False
     substitute_glyphs: bool = False
@@ -91,6 +93,7 @@ class Analysis:
     legends: list = field(default_factory=list)
     dashed: list = field(default_factory=list)
     rotations: dict[int, float] = field(default_factory=dict)
+    pens: list[float] = field(default_factory=list)
     rejected: list = field(default_factory=list)
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
@@ -110,6 +113,25 @@ def analyse(path: Path, options: Options) -> Analysis:
         if tick
     ]
     dashed, frames, traces, leftovers = partition(page, working, rules, ticks, text_height)
+
+    # One drawing, one or two pens. Snapping here rather than at the drawing
+    # keeps every later measurement -- arrowheads, dash periods -- on the width
+    # the mark will actually be drawn with.
+    pens = pen_set(
+        [trace.stroke_width for trace in traces]
+        + [line.stroke_width for line in dashed]
+        + [rule.thickness for rule in rules],
+        page.stroke_width,
+    )
+    for trace in traces:
+        trace.stroke_width = nearest_pen(trace.stroke_width, pens)
+    for line in dashed:
+        line.stroke_width = nearest_pen(line.stroke_width, pens)
+    for rule in rules:
+        rule.thickness = nearest_pen(rule.thickness, pens)
+
+    # A line the scan broke into pieces is still one line.
+    traces = merge_collinear(traces, tolerance=1.2 * page.stroke_width, reach=6.0 * page.stroke_width)
     blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
 
     marker_sets, consumed = find_marker_sets(
@@ -142,7 +164,7 @@ def analyse(path: Path, options: Options) -> Analysis:
     return Analysis(
         page, components, text_height, rules, ticks, traces, blocks,
         regions=regions, marker_sets=marker_sets, frames=frames, legends=legends,
-        dashed=dashed,
+        dashed=dashed, pens=pens,
     )
 
 
@@ -370,7 +392,11 @@ def _draw_instead(analysis: Analysis, block: Block) -> None:
     """
     pen = analysis.page.stroke_width
     for component in block.components:
-        analysis.traces.extend(trace_strokes(component, shortest=3.0 * pen))
+        for stroke in trace_strokes(component, shortest=3.0 * pen):
+            # Handed back after the pens were settled, so settle this one too.
+            if analysis.pens:
+                stroke.stroke_width = nearest_pen(stroke.stroke_width, analysis.pens)
+            analysis.traces.append(stroke)
 
 
 def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) -> list[ir.Element]:
