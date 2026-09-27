@@ -69,6 +69,37 @@ def split_solids(ink: np.ndarray, stroke_width: float) -> tuple[np.ndarray, np.n
     return solid, cv2.bitwise_and(ink, cv2.bitwise_not(solid))
 
 
+def ruling_width(mask: np.ndarray, area: int, spacing: float, pen: float) -> float:
+    """How thick the ruling is drawn, as against the pen the page uses.
+
+    Shading is often ruled finer than the drawing it fills, and the page's pen
+    was being passed through instead: a ruling of 3 came back at the page's 4.4
+    and the gaps between the lines closed up by half.
+
+    Counted rather than measured, because measuring is fragile here. Lines of
+    width w at spacing s cover w/s of what they fill, so w follows from the ink,
+    the area it covers and the spacing already known -- and none of that turns on
+    the angle. Two things that do were tried and over-read by half again: the
+    ridge of a distance transform, which reads the shape's outline as ruling,
+    and the width of the ink folded onto one period, which smears as soon as the
+    measured angle is a degree out over a line a few hundred pixels long.
+    """
+    filled = np.zeros_like(mask)
+    contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return pen
+    outer = max(contours, key=cv2.contourArea)
+    cv2.drawContours(filled, [outer], -1, 255, cv2.FILLED)
+    covered = float(np.count_nonzero(filled))
+    if covered <= 0:
+        return pen
+
+    # The outline is ink too, and is not ruling.
+    edge = float(cv2.arcLength(outer, True)) * pen
+    ruling = max(0.0, float(area) - edge)
+    return float(np.clip(spacing * ruling / covered, 0.35 * pen, 1.5 * pen))
+
+
 def detect_hatch(
     component: Component,
     stroke_width: float,
@@ -155,7 +186,7 @@ def detect_hatch(
     return Hatch(
         angle=float(mean),
         spacing=spacing,
-        stroke_width=stroke_width,
+        stroke_width=ruling_width(mask, component.area, spacing, stroke_width),
         coverage=coverage,
     )
 
