@@ -568,6 +568,51 @@ def merge_collinear(traces: list[Trace], tolerance: float, reach: float) -> list
     return merged + rest
 
 
+def straighten(traces: list[Trace], tolerance: float) -> list[Trace]:
+    """Draw a straight stroke straight, whatever angle it lies at.
+
+    A stroke was redrawn from the shape it fits only when that shape could be
+    written as y of x, which a line at an arbitrary angle cannot: on one figure
+    eleven of sixteen strokes were straight and only seven were recognised, and
+    the rest were drawn through the scan's own wobble. Straightness is a
+    question about a line, not about either axis, so it is asked of both.
+    """
+    drawn: list[Trace] = []
+    for trace in traces:
+        found = _straight(trace.points, tolerance) if trace.dash <= 0 else None
+        if found is None:
+            drawn.append(trace)
+            continue
+        direction, centre, low, high = found
+        drawn.append(
+            Trace(
+                points=np.array([centre + low * direction, centre + high * direction], dtype=float),
+                stroke_width=trace.stroke_width,
+                components=trace.components,
+                method=trace.method,
+            )
+        )
+    return drawn
+
+
+def smooth_path(points: np.ndarray, window: int) -> np.ndarray:
+    """Take the scan's wobble out of a curve without moving where it runs.
+
+    A drawn curve that fits no line or polynomial was written out through every
+    point the tracer found, and a scanned stroke wanders a pixel either way
+    along its whole length. Averaging along the path settles it; the two ends
+    are kept where they were so the curve still meets what it joins.
+    """
+    if window < 3 or points.shape[0] < window + 2:
+        return points
+    kernel = np.ones(window) / float(window)
+    inner = np.column_stack([
+        np.convolve(points[:, 0], kernel, mode="valid"),
+        np.convolve(points[:, 1], kernel, mode="valid"),
+    ])
+    return np.vstack([points[0], inner, points[-1]])
+
+
 def pen_set(widths: list[float], fallback: float, apart: float = 1.55) -> list[float]:
     """The pen weights a drawing was made with, from the widths measured on it.
 

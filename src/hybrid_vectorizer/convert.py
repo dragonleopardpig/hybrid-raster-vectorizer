@@ -53,7 +53,8 @@ from .shapes import (
 )
 from .textlayout import Block, group_blocks, text_angle
 from .tracing import (
-    Trace, arrowheads_on, merge_collinear, nearest_pen, partition, pen_set, trace_strokes,
+    Trace, arrowheads_on, merge_collinear, nearest_pen, partition, pen_set,
+    smooth_path, straighten, trace_strokes,
 )
 
 
@@ -134,8 +135,10 @@ def analyse(path: Path, options: Options) -> Analysis:
         if region.hatch is not None:
             region.hatch.stroke_width = nearest_pen(region.hatch.stroke_width, pens)
 
-    # A line the scan broke into pieces is still one line.
+    # A line the scan broke into pieces is still one line, and a straight one is
+    # drawn straight.
     traces = merge_collinear(traces, tolerance=1.2 * page.stroke_width, reach=6.0 * page.stroke_width)
+    traces = straighten(traces, tolerance=1.2 * page.stroke_width)
     blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
 
     marker_sets, consumed = find_marker_sets(
@@ -625,7 +628,7 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
             points[:, 0], points[:, 1], tolerance=options.model_tolerance * trace.stroke_width
         )
         loose = choose_model(points[:, 0], points[:, 1], tolerance=4.0 * trace.stroke_width)
-        source = points
+        source = smooth_path(points, int(2.0 * trace.stroke_width) | 1)
         if options.idealise and model is not None:
             grid = np.linspace(points[0, 0], points[-1, 0], max(256, points.shape[0]))
             source = np.column_stack([grid, model.sample(grid)])
