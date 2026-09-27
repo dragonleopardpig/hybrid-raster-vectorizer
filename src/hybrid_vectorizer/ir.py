@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import html
 import json
+import math
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -171,26 +172,62 @@ class Area(Element):
     bordered: bool = False
     border_width: float = 1.0
     opacity: float = 1.0
+    bounds: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
 
     @property
-    def pattern(self) -> str | None:
-        return f"hatch-{self.identifier}" if self.hatch_spacing else None
+    def ruled(self) -> bool:
+        return bool(self.hatch_spacing and self.hatch_spacing > 0)
+
+    @property
+    def clip(self) -> str:
+        return f"clip-{self.identifier}"
 
     def defs(self) -> list[str]:
-        if not self.pattern:
+        """A ruled area is shaded with lines, so it is clipped, not patterned.
+
+        An SVG pattern tiles a square and rotates it, and at any angle that is
+        not a right angle the tiles meet unevenly: the ruling came out with
+        seams and lines of the wrong weight, in resvg and in Inkscape alike. The
+        ruling is drawn as the lines it is, cut to the shape they fill.
+        """
+        if not self.ruled:
             return []
-        spacing = _number(self.hatch_spacing or 1.0)
         return [
-            f'    <pattern id="{_attribute(self.pattern)}" patternUnits="userSpaceOnUse"',
-            f'             width="{spacing}" height="{spacing}"',
-            f'             patternTransform="rotate({_number(self.hatch_angle or 0.0)})">',
-            f'      <line x1="0" y1="0" x2="{spacing}" y2="0" stroke="currentColor"',
-            f'            stroke-width="{_number(self.hatch_width)}"/>',
-            "    </pattern>",
+            f'    <clipPath id="{_attribute(self.clip)}">',
+            f'      <path d="{self.path}"/>',
+            "    </clipPath>",
         ]
 
+    def _ruling(self, indent: str) -> list[str]:
+        x, y, width, height = self.bounds
+        if width <= 0 or height <= 0:
+            return []
+        spacing = max(1.0, float(self.hatch_spacing or 1.0))
+        radians = math.radians(self.hatch_angle or 0.0)
+        along = (math.cos(radians), math.sin(radians))
+        across = (-along[1], along[0])
+        centre = (x + width / 2.0, y + height / 2.0)
+        reach = 0.5 * math.hypot(width, height) + spacing
+
+        lines = [
+            f'{indent}<g class="hatch" clip-path="url(#{_attribute(self.clip)})" '
+            f'stroke="currentColor" stroke-width="{_number(self.hatch_width)}">'
+        ]
+        steps = int(reach / spacing) + 1
+        for index in range(-steps, steps + 1):
+            offset = index * spacing
+            base = (centre[0] + across[0] * offset, centre[1] + across[1] * offset)
+            start = (base[0] - along[0] * reach, base[1] - along[1] * reach)
+            end = (base[0] + along[0] * reach, base[1] + along[1] * reach)
+            lines.append(
+                f'{indent}  <line x1="{_number(start[0])}" y1="{_number(start[1])}" '
+                f'x2="{_number(end[0])}" y2="{_number(end[1])}"/>'
+            )
+        lines.append(f"{indent}</g>")
+        return lines
+
     def to_svg(self, indent: str) -> list[str]:
-        fill = f'url(#{self.pattern})' if self.pattern else "currentColor"
+        fill = "none" if self.ruled else "currentColor"
         # Written as attributes, not as a class rule: a stylesheet rule would
         # beat the attribute and silently erase a frame that was really drawn.
         edge = (
@@ -202,17 +239,19 @@ class Area(Element):
         common = f'class="area {self.shape}" {self.attributes()} fill="{fill}"{tint}{edge}'
         if self.shape == "rectangle" and self.parameters:
             p = self.parameters
-            return [
+            shape = [
                 f'{indent}<rect {common} x="{_number(p["x"])}" y="{_number(p["y"])}" '
                 f'width="{_number(p["width"])}" height="{_number(p["height"])}"/>'
             ]
-        if self.shape == "circle" and self.parameters:
+        elif self.shape == "circle" and self.parameters:
             p = self.parameters
-            return [
+            shape = [
                 f'{indent}<circle {common} cx="{_number(p["cx"])}" cy="{_number(p["cy"])}" '
                 f'r="{_number(p["r"])}"/>'
             ]
-        return [f'{indent}<path {common} fill-rule="evenodd" d="{self.path}"/>']
+        else:
+            shape = [f'{indent}<path {common} fill-rule="evenodd" d="{self.path}"/>']
+        return self._ruling(indent) + shape if self.ruled else shape
 
 
 @dataclass

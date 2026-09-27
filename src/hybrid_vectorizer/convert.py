@@ -120,7 +120,8 @@ def analyse(path: Path, options: Options) -> Analysis:
     pens = pen_set(
         [trace.stroke_width for trace in traces]
         + [line.stroke_width for line in dashed]
-        + [rule.thickness for rule in rules],
+        + [rule.thickness for rule in rules]
+        + [region.hatch.stroke_width for region in regions if region.hatch is not None],
         page.stroke_width,
     )
     for trace in traces:
@@ -129,6 +130,9 @@ def analyse(path: Path, options: Options) -> Analysis:
         line.stroke_width = nearest_pen(line.stroke_width, pens)
     for rule in rules:
         rule.thickness = nearest_pen(rule.thickness, pens)
+    for region in regions:
+        if region.hatch is not None:
+            region.hatch.stroke_width = nearest_pen(region.hatch.stroke_width, pens)
 
     # A line the scan broke into pieces is still one line.
     traces = merge_collinear(traces, tolerance=1.2 * page.stroke_width, reach=6.0 * page.stroke_width)
@@ -608,6 +612,10 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 bordered=region.bordered,
                 border_width=page.stroke_width,
                 opacity=region.opacity,
+                bounds=(
+                    float(region.component.x), float(region.component.y),
+                    float(region.component.width), float(region.component.height),
+                ),
             )
         )
 
