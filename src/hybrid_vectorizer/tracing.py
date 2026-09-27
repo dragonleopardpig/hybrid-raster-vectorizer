@@ -495,8 +495,15 @@ def follow_dashed_curves(
     return curves
 
 
-def _straight(points: np.ndarray, tolerance: float):
-    """Direction, a point on it, and the run along it -- if these points are straight."""
+def _straight(points: np.ndarray, tolerance: float, bend: float = 0.02):
+    """Direction, a point on it, and the run along it -- if these points are straight.
+
+    Straight in its own terms, not merely within a few pixels. A short piece of a
+    curve passes any absolute tolerance trivially, so a curve broken into pieces
+    was drawn as a polygon: the lens on fig-4-25 came out a box with a wedge
+    under it. What a line has that a short arc has not is that it stays straight
+    in proportion to how far it runs.
+    """
     if points.shape[0] < 2:
         return None
     centre = points.mean(axis=0)
@@ -504,9 +511,13 @@ def _straight(points: np.ndarray, tolerance: float):
     _u, _s, vectors = np.linalg.svd(centred, full_matrices=False)
     direction = vectors[0]
     normal = np.array([-direction[1], direction[0]])
-    if float(np.abs(centred @ normal).max()) > tolerance:
+    stray = float(np.abs(centred @ normal).max())
+    if stray > tolerance:
         return None
     along = centred @ direction
+    run = float(along.max() - along.min())
+    if run <= 0 or stray > bend * run:
+        return None
     return direction, centre, float(along.min()), float(along.max())
 
 
