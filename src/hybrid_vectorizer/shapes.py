@@ -290,6 +290,38 @@ def has_border(component: Component, stroke_width: float, *, threshold: float = 
     return int(np.count_nonzero(cv2.bitwise_and(edge, near_ink))) / total >= threshold
 
 
+def paper_trough(gray: np.ndarray, ink: np.ndarray, lift: float = 1.4) -> int | None:
+    """Where the paper ends and a tint begins, read off this scan's own greys.
+
+    A light tint prints a few levels below the paper, and a fixed offset from
+    the paper cannot find it: a tint at 242 sat just above a ceiling of 240 and
+    was cut away, leaving a holey blob whose edge wandered through its middle
+    instead of following the outline it was drawn with.
+
+    A page carrying a tint is bimodal below the paper spike -- a tint mode, a
+    trough, then paper. A page without one rises to the paper monotonically, and
+    is left alone.
+    """
+    counts = np.bincount(gray[ink == 0], minlength=256).astype(float)
+    if counts.sum() <= 0:
+        return None
+    smooth = cv2.GaussianBlur(counts.reshape(-1, 1), (1, 5), 0).ravel()
+
+    top = int(np.argmax(smooth))
+    trough = None
+    for level in range(top - 2, 8, -1):
+        if smooth[level] <= smooth[level + 1] and smooth[level] <= smooth[level - 1]:
+            trough = level
+            break
+    if trough is None or trough < 16:
+        return None
+
+    peak = int(np.argmax(smooth[:trough]))
+    if smooth[peak] < lift * max(smooth[trough], 1.0):
+        return None
+    return trough
+
+
 def detect_tints(
     gray: np.ndarray,
     ink: np.ndarray,
@@ -322,6 +354,9 @@ def detect_tints(
     threshold, _binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
     low = threshold + 0.25 * (paper - threshold)
     high = paper - max(10.0, 0.06 * paper)
+    trough = paper_trough(gray, ink)
+    if trough is not None:
+        high = max(high, float(trough))
     if high <= low:
         return []
 
@@ -329,9 +364,12 @@ def detect_tints(
     # Fill the screen first: a tint is mostly band with a scatter of holes, and
     # opening it straight away leaves nowhere for the disc to sit.
     band = cv2.morphologyEx(band, cv2.MORPH_CLOSE, _disc(max(1, int(stroke_width))))
-    band = cv2.morphologyEx(band, cv2.MORPH_OPEN, _disc(max(2, int(2 * stroke_width))))
+    settled = band
+    opening = max(2, int(2 * stroke_width))
+    band = cv2.morphologyEx(band, cv2.MORPH_OPEN, _disc(opening))
     if claimed is not None:
         band = cv2.bitwise_and(band, cv2.bitwise_not(claimed))
+        settled = cv2.bitwise_and(settled, cv2.bitwise_not(claimed))
 
     near_ink = cv2.dilate(ink, _disc(max(2, int(1.5 * stroke_width))))
     ring = _disc(4)
@@ -348,7 +386,13 @@ def detect_tints(
         if not inside.any():
             continue
 
-        contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        # Opening pulled the blob a disc's width inside the outline that drew
+        # it, further than the ink is looked for, so an area someone had plainly
+        # outlined scored 0.72 where it needed 0.85. Put the width back before
+        # asking where its edge runs, without letting it spread past the tint.
+        edged = cv2.bitwise_and(cv2.dilate(mask, _disc(opening)), settled)
+
+        contours, _hierarchy = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         if not contours:
             continue
         boundary = max(contours, key=cv2.contourArea).reshape(-1, 2)
