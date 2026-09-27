@@ -334,6 +334,11 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 
 ## On real scans
 
+The agreement figures below depend on which faces are installed, because the text is
+set in one of them. The same commit measured on two machines moves a figure by up to
+0.008 either way, and moves the ones that are mostly drawing not at all. Compare
+numbers taken on one machine, not across two.
+
 `examples/` holds five scanned optics figures. They are harder than either
 generated example, and the table is where the work stands rather than where it
 should be.
@@ -343,7 +348,7 @@ should be.
 | `complex.png` | 8 | 8 | clean; ink agreement 0.93 recall, 0.92 precision; every label read correctly |
 | `waves1.png` | 0 | 33 | 0.97 recall, 0.96 precision; its dashed waves followed as curves |
 | `thicklens_cascade.png` | 8 | 39 | 0.97 recall, 0.96 precision; lens tints, broken lines, dimension arrows |
-| `refraction.png` | 36 | 46 | 0.93 recall, 0.92 precision; the shaded slab read as a 12% tint |
+| `refraction.png` | 36 | 46 | 0.95 recall, 0.94 precision; the shaded slab read as a 12% tint |
 | `wavefront.png` | 60 | 82 | 0.97 recall, 0.94 precision; heavy grain and show-through throughout |
 
 A broken line is allowed to lose a dash or two behind whatever it passes, so

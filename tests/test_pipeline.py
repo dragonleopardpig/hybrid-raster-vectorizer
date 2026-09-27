@@ -1005,6 +1005,24 @@ class FrameTest(unittest.TestCase):
         cv2.rectangle(mask, (3, 3), (236, 116), 255, -1)
         self.assertFalse(is_frame(self._component(mask), 3.0))
 
+    def test_a_dimension_bracket_is_not_a_frame(self):
+        """Two end bars and the arrow between them: three sides, and no box."""
+        from hybrid_vectorizer.shapes import is_frame
+
+        mask = np.zeros((240, 120), np.uint8)
+        cv2.line(mask, (4, 6), (116, 6), 255, 3)       # the top bar
+        cv2.line(mask, (4, 233), (116, 233), 255, 3)   # the bottom bar
+        cv2.line(mask, (60, 6), (60, 233), 255, 3)     # the arrow between them
+        self.assertFalse(is_frame(self._component(mask), 3.0))
+
+    def test_a_box_open_along_one_side_is_not_a_frame(self):
+        from hybrid_vectorizer.shapes import is_frame
+
+        mask = np.zeros((120, 240), np.uint8)
+        cv2.rectangle(mask, (3, 3), (236, 116), 255, 3)
+        cv2.line(mask, (3, 3), (3, 116), 0, 7)         # rub out the left side
+        self.assertFalse(is_frame(self._component(mask), 3.0))
+
     def test_a_curve_of_the_same_extent_is_not_a_frame(self):
         from hybrid_vectorizer.shapes import is_frame
 

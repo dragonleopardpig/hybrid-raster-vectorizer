@@ -527,11 +527,18 @@ class Frame:
         )
 
 
-def is_frame(component: Component, stroke_width: float) -> bool:
+def is_frame(component: Component, stroke_width: float, least_enclosed: float = 0.3) -> bool:
     """A closed box drawn with a pen and empty inside.
 
     Its ink is about what tracing the boundary once would use, and its convex
     hull fills its bounding box, which a curve of the same extent does not.
+
+    And it encloses something, which none of that establishes. A dimension
+    bracket -- two end bars with an arrow between them -- uses about three
+    quarters of a perimeter's ink and its hull fills its box, so refraction.png
+    offered one as a frame and it was then furnished as a legend: 2786px drawn,
+    58% of it invented, two fifths of everything that figure invents. A box has
+    a hole in it, and the contour hierarchy knows.
     """
     if min(component.width, component.height) < 8 * stroke_width:
         return False
@@ -543,12 +550,27 @@ def is_frame(component: Component, stroke_width: float) -> bool:
         return False
 
     padded = cv2.copyMakeBorder(component.mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
-    contours, _hierarchy = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, hierarchy = cv2.findContours(padded, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return False
-    hull = cv2.convexHull(max(contours, key=cv2.contourArea))
     box = float(component.width * component.height)
-    return cv2.contourArea(hull) / max(1.0, box) >= 0.85
+
+    outer = max(range(len(contours)), key=lambda index: cv2.contourArea(contours[index]))
+    hull = cv2.convexHull(contours[outer])
+    if cv2.contourArea(hull) / max(1.0, box) < 0.85:
+        return False
+
+    # The hole a closed box leaves. RETR_CCOMP puts every interior contour at
+    # the second level, so the ones whose parent is the outline are its holes.
+    enclosed = max(
+        (
+            cv2.contourArea(contour)
+            for index, contour in enumerate(contours)
+            if hierarchy[0][index][3] == outer
+        ),
+        default=0.0,
+    )
+    return enclosed / max(1.0, box) >= least_enclosed
 
 
 def find_frames(components: list[Component], stroke_width: float) -> list[Frame]:
