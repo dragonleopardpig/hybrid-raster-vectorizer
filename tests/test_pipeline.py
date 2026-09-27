@@ -1383,6 +1383,62 @@ class CrossingStrokesTest(unittest.TestCase):
         self.assertEqual(len(trace_strokes(self._component(image), shortest=40.0)), 1)
 
 
+class RuledShadingTest(unittest.TestCase):
+    """Shading drawn as lines, which a fine ruling makes look like a fill."""
+
+    def _ruled(self, angle_deg, spacing, rule_pen, edge_pen):
+        import math
+
+        page = np.zeros((560, 820), np.uint8)
+        box = np.array([[130, 90], [640, 90], [640, 420], [130, 420]], np.int32)
+        cv2.polylines(page, [box], True, 255, edge_pen)
+        inside = np.zeros_like(page)
+        cv2.fillPoly(inside, [box], 255)
+        ruling = np.zeros_like(page)
+        radians = math.radians(angle_deg)
+        reach = 1500
+        for step in range(-reach, reach, spacing):
+            a = (int(step * math.cos(radians) - reach * math.sin(radians)) + 385,
+                 int(step * math.sin(radians) + reach * math.cos(radians)) + 255)
+            b = (int(step * math.cos(radians) + reach * math.sin(radians)) + 385,
+                 int(step * math.sin(radians) - reach * math.cos(radians)) + 255)
+            cv2.line(ruling, a, b, 255, rule_pen)
+        keep = cv2.erode(inside, np.ones((9, 9), np.uint8))
+        return cv2.bitwise_or(page, cv2.bitwise_and(ruling, keep))
+
+    def _regions(self, ink):
+        from hybrid_vectorizer.shapes import detect_regions
+
+        regions, _working = detect_regions(ink, estimate_stroke_width(ink), 255 - ink)
+        return regions
+
+    def test_a_finely_ruled_area_is_shading_not_a_fill(self):
+        """Ruled closely enough, shading survives an opening as though solid."""
+        for angle, spacing in ((45, 24), (60, 20)):
+            with self.subTest(angle=angle):
+                regions = self._regions(self._ruled(angle, spacing, 2, 7))
+                ruled = [r for r in regions if r.hatch]
+                self.assertEqual(len(ruled), 1, f"{[r.kind for r in regions]}")
+                self.assertAlmostEqual(ruled[0].hatch.spacing, spacing, delta=3.0)
+
+    def test_the_ruling_is_drawn_at_its_own_weight(self):
+        """Shading is often ruled finer than the drawing it fills."""
+        regions = self._regions(self._ruled(30, 26, 3, 9))
+        ruled = [r for r in regions if r.hatch]
+        self.assertEqual(len(ruled), 1)
+        self.assertLess(ruled[0].hatch.stroke_width, 9.0, "not the outline's pen")
+
+    def test_a_solid_area_is_not_read_as_ruling(self):
+        """The same block filled rather than ruled, on a page drawn with a pen."""
+        page = np.zeros((560, 820), np.uint8)
+        cv2.rectangle(page, (130, 90), (640, 420), 255, -1)
+        for y in (470, 500, 530):                      # something to set the pen by
+            cv2.line(page, (130, y), (640, y), 255, 3)
+        regions = self._regions(page)
+        self.assertTrue(regions, "the block is still an area")
+        self.assertEqual([r.kind for r in regions if r.hatch], [])
+
+
 class StrokesAreNotMarkersTest(unittest.TestCase):
     """A dash set at an angle has a square bounding box; it is still a dash."""
 

@@ -451,8 +451,45 @@ def detect_tints(
     return regions
 
 
+def solidity(component: Component) -> float:
+    """How much of the ground it covers this component's ink actually fills.
+
+    Against the hull of all of it, not against its largest outline: a ruled area
+    has one outline per line, and measured against a single line the ruling is
+    solid, which is how it went on being taken for a fill.
+    """
+    points = cv2.findNonZero(component.mask)
+    if points is None or len(points) < 3:
+        return 1.0
+    covered = float(cv2.contourArea(cv2.convexHull(points)))
+    if covered <= 0:
+        return 1.0
+    return float(len(points)) / covered
+
+
+def as_printed(component: Component, ink: np.ndarray) -> Component | None:
+    """The same patch of page, as printed rather than as an opening left it.
+
+    The whole patch, not the component's own footprint: masking by the shape the
+    opening left cuts the ruling into fragments too short for the line finder,
+    and the ruling then cannot be seen at all. What keeps other ink out is the
+    solidity test that decides whether to ask.
+    """
+    patch = ink[component.y : component.bottom, component.x : component.right]
+    if patch.size == 0:
+        return None
+    mask = patch.copy()
+    return Component(
+        label=component.label, x=component.x, y=component.y,
+        width=component.width, height=component.height,
+        area=int(np.count_nonzero(mask)),
+        centroid=component.centroid, mask=mask,
+    )
+
+
 def detect_regions(
-    ink: np.ndarray, stroke_width: float, gray: np.ndarray | None = None
+    ink: np.ndarray, stroke_width: float, gray: np.ndarray | None = None,
+    ruled_at_most: float = 0.35,
 ) -> tuple[list[Region], np.ndarray]:
     """Take the filled and ruled areas out of the ink before anything else.
 
@@ -477,6 +514,35 @@ def detect_regions(
         shape = outline(component, stroke_width)
         if shape is None:
             continue
+
+        # Ruling drawn finely enough survives an opening as though it were a
+        # fill, and was being claimed as solid and taken off the page before
+        # anything asked whether it was ruled. Ruling at 2px went that way at
+        # every angle tried. The question is asked of the ink as printed, not of
+        # what the opening left of it.
+        printed = as_printed(component, ink)
+        ruling = None
+        if printed is not None and solidity(printed) < ruled_at_most:
+            # A solid area's ink fills the ground it covers; ruling fills only
+            # the share its width bears to its spacing. Measured: ruling sits at
+            # 0.08 to 0.10, and the small solids whose scan texture answered the
+            # question spuriously at 0.46 to 0.66.
+            ruling = detect_hatch(printed, stroke_width)
+        if ruling is not None:
+            drawn = outline(printed, stroke_width) or shape
+            regions.append(
+                Region(
+                    component=printed,
+                    kind="hatched",
+                    outline=drawn,
+                    hatch=ruling,
+                    bordered=has_border(printed, stroke_width),
+                )
+            )
+            patch = working[printed.y : printed.bottom, printed.x : printed.right]
+            patch[printed.mask > 0] = 0
+            continue
+
         regions.append(Region(component=component, kind="solid", outline=shape))
         patch = working[component.y : component.bottom, component.x : component.right]
         patch[component.mask > 0] = 0
