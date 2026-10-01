@@ -20,7 +20,8 @@ from .components import Component
 class Reading:
     text: str
     engine: str
-    confidence: float
+    confidence: float | None
+    consistency: float | None = None
 
 
 def _require(command: str) -> str:
@@ -162,7 +163,7 @@ class FormulaReader:
         response = json.loads(self._process.stdout.readline())  # type: ignore[union-attr]
         if not response.get("ok"):
             return Reading(text="", engine="formulaocr", confidence=0.0)
-        return Reading(text=response["formula"].strip(), engine="formulaocr", confidence=0.75)
+        return Reading(text=response["formula"].strip(), engine="formulaocr", confidence=None)
 
 
 def augmentations(image: np.ndarray, count: int) -> list[np.ndarray]:
@@ -170,8 +171,8 @@ def augmentations(image: np.ndarray, count: int) -> list[np.ndarray]:
 
     A model that reads the same mark differently at a different scale or stroke
     weight is telling us it is unsure; one that never wavers is confident, even
-    when it is confidently wrong. Agreement across these is the only confidence
-    the recogniser offers, since it returns a single string.
+    when it is confidently wrong. Agreement measures stability, not the
+    probability of a correct reading; the recogniser returns only a string.
     """
     variants = [image]
     ink = 255 - image
@@ -233,7 +234,7 @@ _WORDLIKE = re.compile(r"^[A-Za-z][A-Za-z.'-]*$")
 
 def looks_like_prose(reading: Reading) -> bool:
     """Prose is confidently recognised words and digits, not stray symbols."""
-    if reading.confidence < 0.60 or not reading.text:
+    if reading.confidence is None or reading.confidence < 0.60 or not reading.text:
         return False
     tokens = reading.text.split()
     if not tokens:

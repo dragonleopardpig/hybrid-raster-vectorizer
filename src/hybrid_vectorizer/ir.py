@@ -26,6 +26,7 @@ class Element:
     confidence: float = 1.0
     provenance: str = ""
     identifier: str | None = None
+    review_reasons: list[str] = field(default_factory=list)
 
     def defs(self) -> list[str]:
         """Anything this element needs declared once, such as a pattern."""
@@ -38,6 +39,8 @@ class Element:
         parts.append(f'data-confidence="{self.confidence:.2f}"')
         if self.provenance:
             parts.append(f'data-from="{_attribute(self.provenance)}"')
+        if self.review_reasons:
+            parts.append(f'data-review="{_attribute("; ".join(self.review_reasons))}"')
         return " ".join(parts)
 
 
@@ -265,6 +268,7 @@ class MarkerField(Element):
     positions: list[tuple[float, float]] = field(default_factory=list)
     parameters: dict = field(default_factory=dict)
     symbol_id: str | None = None
+    path: str = ""
 
     @property
     def symbol(self) -> str:
@@ -287,8 +291,12 @@ class MarkerField(Element):
                 f'<path d="M0 {_number(-half)} L{_number(half)} {_number(half)} '
                 f'L{_number(-half)} {_number(half)} Z" {paint}/>'
             )
-        radius = float(self.parameters.get("r", half))
-        return f'<circle cx="0" cy="0" r="{_number(radius)}" {paint}/>'
+        if self.shape == "circle":
+            radius = float(self.parameters.get("r", half))
+            return f'<circle cx="0" cy="0" r="{_number(radius)}" {paint}/>'
+        if self.path:
+            return f'<path d="{_attribute(self.path)}" fill-rule="evenodd" {paint}/>'
+        raise ValueError(f"Marker shape {self.shape!r} requires its original path")
 
     def defs(self) -> list[str]:
         if self.symbol_id:
@@ -443,6 +451,20 @@ class RasterFallback(Element):
             f'width="{_number(self.width)}" height="{_number(self.height)}" '
             f'xlink:href="data:image/png;base64,{payload}" '
             f'href="data:image/png;base64,{payload}"/>'
+        ]
+
+
+@dataclass
+class VectorFallback(Element):
+    path: str = ""
+    x: float = 0.0
+    y: float = 0.0
+
+    def to_svg(self, indent: str) -> list[str]:
+        return [
+            f'{indent}<path class="preserved-ink" {self.attributes()} '
+            f'transform="translate({_number(self.x)} {_number(self.y)})" '
+            f'fill="currentColor" fill-rule="evenodd" stroke="none" d="{_attribute(self.path)}"/>'
         ]
 
 

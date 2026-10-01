@@ -12,6 +12,61 @@ That works from an ordinary terminal: the wrapper re-enters the dev shell itself
 if it is not already in one. Everything runs offline once the OCR model is
 present.
 
+## Conservative reconstruction
+
+The converter now preserves an uncertain label as **vector contours of its
+original ink**. It keeps the OCR candidate in the JSON report, but does not
+print that candidate as if it were verified. Empty OCR results, unavailable
+fonts, unsupported formula commands, and rejected layouts follow the same
+preservation path. Holes, isolated dots, and small marks are retained. These
+contours remain fully vector; their character identity is still unresolved.
+
+PP-FormulaNet's worker does not supply a recognition probability. Its
+`reading_confidence` is therefore `null`, not a fabricated 0.75. Repeated OCR
+passes report `consistency` separately; agreement between passes is not proof
+of correctness. `shape_score` reports visual resemblance separately from
+recognition evidence. `needs_review` includes uncertain labels inside legends.
+Isolated letters are also reviewed: high Tesseract confidence alone cannot
+distinguish a Latin letter from a similar mathematical symbol such as λ.
+
+Use `--typeset-uncertain` to explicitly render tentative readings as editable
+text. Unsupported commands and empty readings are still preserved. Use
+`--raster-fallback` to preserve uncertain labels as embedded pixels instead of
+vector contours. The default output contains no embedded raster images.
+
+The stroke tracer follows branches through junctions using tangent continuity
+and preserves closed loops. Straight strokes use line commands, circular arcs
+can use SVG arc commands, and general curves use parametric cubic Beziers.
+Analytic models of `y(x)` are only considered for suitable traces. Supported
+curve contacts hidden by axis removal constrain the fitted paths. Stroke-width
+normalization cannot change a measured width by more than 15%.
+
+Repeated unknown shapes are left available to the text stage. Only supported
+marker shapes are claimed automatically, and the renderer requires an actual
+path for any other marker shape instead of replacing it with a circle.
+
+Verification reports exact overlap, tolerant overlap, distances between the
+drawings, and missing-ink regions. The `quality` section distinguishes typeset,
+preserved, and unverified labels. These measures do **not** establish correct
+text or connectivity; semantic accuracy requires annotations.
+
+Run the offline benchmark against the supplied text and object annotations:
+
+```sh
+PYTHONPATH=src python tools/evaluate.py \
+  examples/interference/raster.png examples/waves1.png \
+  --output-dir build/benchmark
+```
+
+The tool writes SVGs, previews, reports, and `benchmark.json`. When Potrace is
+installed it also traces exactly the same preprocessed masks. OCR scores compare
+the tentative reading with the reference even when the original ink is
+preserved. Character error rate covers annotated regions; unmatched predictions
+are reported separately. `--reports-only` scores existing conversions in that
+output directory. The supplied annotations are regression examples, not a
+held-out demonstration of general accuracy; `--references` accepts additional
+annotated figures in the same JSON format.
+
 ## What the converter does
 
 `convert` is a single automatic pass. Each stage hands measurements to the next,
@@ -98,7 +153,7 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    sinusoids (period by spectrum, then a bracketed minimisation), and fitted
    with cubic Béziers by Schneider's algorithm to a tolerance set as a fraction
    of the pen width. The analytic reading is recorded on the path either way;
-   `--idealise` redraws from it instead of from the ink.
+   accepted models are used by default; `--trace-ink` follows the measured ink.
 10. **Text** — leftover ink is grouped into labels. Grouping runs along the
    line, so a label turned on its side arrives as a handful of unrelated
    pieces; those are rejoined by the one thing that makes them a line — narrow
@@ -137,7 +192,8 @@ and every decision it makes is recorded in a JSON report beside the SVG.
    flat and placed with a `transform`, so its text stays one editable run
    rather than a glyph per line.
 13. **Verification** — the finished SVG is rasterised with resvg and compared
-   against the original ink, and the agreement is reported.
+   against the preprocessed ink. Exact and tolerant agreement, distances, and
+   missing regions are reported alongside the representation of each label.
 
 The page is **transparent** and every mark paints with `currentColor`, so an
 inline SVG simply takes the colour of the text around it. Viewed on its own the
@@ -146,6 +202,9 @@ file defaults to dark ink and switches to light ink under
 `--background COLOR` paints a solid page instead.
 
 ## What it gets right, and what it does not
+
+The measurements below document earlier experiments before conservative
+preservation and graph tracing. Run the benchmark above for the current code.
 
 `examples/mixed/figure.png` is drawn by `tools/make_mixed_example.py` with known
 contents, because the interference scan is all strokes and cannot show whether
@@ -211,7 +270,7 @@ slightly redrawn crops — rescaled, thinned, thickened, rotated, sharpened — 
 take the majority. Across 56 readings of this figure **δ never once appeared**.
 That is worth knowing: the recogniser is not uncertain about that letterform, it
 is confidently wrong, and no amount of resampling will shake it loose. What the
-ensemble does give is honest confidence: it marks the equation as read only 60%
+ensemble does give is a consistency measurement: it marks the equation as read only 60%
 of the time and one tick label 80%, which are exactly the two readings that are
 genuinely unstable. It costs one OCR pass per variant, so it is off by default.
 
@@ -320,12 +379,13 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 
 | flag | effect |
 |---|---|
-| `--idealise` | redraw curves from the fitted analytic model, not the traced ink |
+| `--trace-ink` | follow measured curves instead of accepted analytic models |
 | `--font FAMILY` | force a font family instead of matching one |
 | `--bezier-tolerance F` | curve fit tolerance as a fraction of the pen width (default 0.25) |
-| `--confidence F` | below this, a label is listed for review (default 0.55) |
+| `--confidence F` | below this recognition score, preserve and flag a label (default 0.55); unknown confidence always needs review |
 | `--largest-label F` | refuse a reading needing type more than F times the page's text height (default 3.5) |
-| `--raster-fallback` | embed original pixels for labels below that threshold |
+| `--raster-fallback` | preserve uncertain labels as pixels instead of vector contours |
+| `--typeset-uncertain` | render tentative OCR text while retaining review warnings |
 | `--background COLOR` | paint a solid page instead of leaving it transparent |
 | `--ensemble N` | read each formula N ways and report how often they agree |
 | `--substitute-glyphs` | per-glyph correction against installed fonts (measured unreliable) |

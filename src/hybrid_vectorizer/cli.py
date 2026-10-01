@@ -56,6 +56,7 @@ def _run_convert(args: argparse.Namespace) -> None:
         confidence_threshold=args.confidence,
         largest_label=args.largest_label,
         raster_fallback=args.raster_fallback,
+        typeset_uncertain=args.typeset_uncertain,
         substitute_glyphs=args.substitute_glyphs,
         solve_alphabet=args.solve_alphabet,
         font_family=args.font,
@@ -82,7 +83,7 @@ def _run_convert(args: argparse.Namespace) -> None:
     print(f"  font        {summary['font']['chosen']}")
     for curve in summary["curves"]:
         print(
-            f"  curve {curve['curve']}     {curve['segments']} bezier segments, "
+            f"  curve {curve['curve']}     {curve['segments']} {curve['primitive']} segments, "
             f"model {curve['analytic_model']} residual {curve['analytic_residual_px']}px"
         )
     for area in summary.get("areas", []):
@@ -113,11 +114,13 @@ def _run_convert(args: argparse.Namespace) -> None:
     for label in summary["labels"]:
         note = f"  <- {label['corrections']}" if label["corrections"] else ""
         others = label.get("other_readings") or []
-        if others:
-            note += f"  [read {label['reading_confidence']:.0%} of the time, {len(others)} other reading(s)]"
+        if others and label.get("consistency") is not None:
+            note += f"  [agreement {label['consistency']:.0%}, {len(others)} other reading(s)]"
         ambiguous = label.get("ambiguous_glyphs") or []
         if ambiguous:
             note += f"  [{len(ambiguous)} unverified glyph(s); see the report]"
+        if label.get("representation") != "text":
+            note += f"  [{label['representation']} preserved; candidate {label['source_reading']!r}]"
         print(f"  {label['id']:<10} {label['confidence']:.2f}  {label['text']}{note}")
     if "agreement" in summary:
         scores = summary["agreement"]
@@ -125,6 +128,12 @@ def _run_convert(args: argparse.Namespace) -> None:
             f"  agreement   recall {scores['recall']:.3f}  precision {scores['precision']:.3f} "
             f"(within {scores['tolerance_px']}px)"
         )
+        print(f"  exact ink   IoU {scores['iou']:.3f}; "
+              f"{scores['missing_ink_pixels']} missing pixels beyond {scores['tolerance_px']}px")
+    quality = summary.get("quality", {})
+    if quality:
+        print(f"  text        {quality['typeset_labels']} typeset, {quality['preserved_labels']} preserved; "
+              f"{quality['unverified_labels']} need review")
     for entry in summary.get("not_labels", []):
         print(
             f"  not a label  {entry['box']} would need {entry['size_px']:.0f}px type: "
@@ -239,7 +248,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     convert_parser.add_argument(
         "--raster-fallback", action="store_true",
-        help="Embed the original pixels for labels below the confidence threshold",
+        help="Preserve uncertain labels as embedded pixels instead of vector contours",
+    )
+    convert_parser.add_argument(
+        "--typeset-uncertain", action="store_true",
+        help="Typeset unverified OCR guesses instead of preserving their original vector outlines",
     )
     convert_parser.add_argument(
         "--substitute-glyphs", action="store_true",

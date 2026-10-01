@@ -479,7 +479,7 @@ def rasterise(svg_text: str, width: int, height: int) -> np.ndarray | None:
 
 
 def agreement(source_ink: np.ndarray, rendered_ink: np.ndarray, tolerance: int = 3) -> dict:
-    """How much of each drawing the other one covers, allowing a small offset."""
+    """Pixel fidelity at exact and tolerant alignment, without semantic claims."""
     if rendered_ink.shape != source_ink.shape:
         rendered_ink = cv2.resize(
             rendered_ink, (source_ink.shape[1], source_ink.shape[0]), interpolation=cv2.INTER_NEAREST
@@ -495,9 +495,39 @@ def agreement(source_ink: np.ndarray, rendered_ink: np.ndarray, tolerance: int =
 
     union = int(np.count_nonzero(cv2.bitwise_or(source_ink, rendered_ink)))
     intersection = int(np.count_nonzero(cv2.bitwise_and(source_ink, rendered_ink)))
+    missing = cv2.bitwise_and(source_ink, cv2.bitwise_not(rendered_near))
+    count, _labels, stats, _centres = cv2.connectedComponentsWithStats(missing, 8)
+    largest = sorted(stats[1:].tolist(), key=lambda entry: entry[4], reverse=True)[:10]
+
+    def distances(measured: np.ndarray, target: np.ndarray) -> tuple[float, float]:
+        if not np.any(measured):
+            return 0.0, 0.0
+        if not np.any(target):
+            maximum = float(np.hypot(*target.shape))
+            return maximum, maximum
+        distance = cv2.distanceTransform((target == 0).astype(np.uint8), cv2.DIST_L2, 5)
+        values = distance[measured > 0]
+        return float(np.mean(values)), float(np.percentile(values, 95))
+
+    missing_mean, missing_p95 = distances(source_ink, rendered_ink)
+    extra_mean, extra_p95 = distances(rendered_ink, source_ink)
     return {
         "recall": covered / source_total,
         "precision": explained / rendered_total,
         "iou": intersection / max(1, union),
         "tolerance_px": tolerance,
+        "exact_recall": intersection / source_total,
+        "exact_precision": intersection / rendered_total,
+        "source_ink_pixels": int(np.count_nonzero(source_ink)),
+        "rendered_ink_pixels": int(np.count_nonzero(rendered_ink)),
+        "missing_ink_pixels": int(np.count_nonzero(missing)),
+        "extra_ink_pixels": rendered_total - explained if np.any(rendered_ink) else 0,
+        "missing_components": count - 1,
+        "largest_missing_components": [
+            {"box": entry[:4], "pixels": entry[4]} for entry in largest
+        ],
+        "source_distance_mean_px": missing_mean,
+        "source_distance_p95_px": missing_p95,
+        "rendered_distance_mean_px": extra_mean,
+        "rendered_distance_p95_px": extra_p95,
     }

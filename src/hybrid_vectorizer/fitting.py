@@ -91,6 +91,10 @@ def fit_sinusoid(
     x: np.ndarray, y: np.ndarray, *, minimum_period: float = 8.0
 ) -> Sinusoid | None:
     """Recover a periodic trace: the period by spectrum, the rest in closed form."""
+    if np.all(np.diff(x) <= 0):
+        x, y = x[::-1], y[::-1]
+    if np.any(np.diff(x) < 0):
+        return None
     span = float(x.max() - x.min())
     if x.size < 16 or span <= 2.0 * minimum_period:
         return None
@@ -283,16 +287,56 @@ def _fit_recursive(
     )
 
 
-def fit_bezier(points: np.ndarray, tolerance: float) -> list[np.ndarray]:
+def fit_bezier(
+    points: np.ndarray, tolerance: float, *,
+    start_tangent: np.ndarray | None = None, end_tangent: np.ndarray | None = None,
+) -> list[np.ndarray]:
     points = np.asarray(points, dtype=float)
     if points.shape[0] < 2:
         return []
-    left = _unit(points[1] - points[0])
-    right = _unit(points[-2] - points[-1])
+    left = _unit(points[1] - points[0] if start_tangent is None else start_tangent)
+    right = _unit(points[-2] - points[-1] if end_tangent is None else -end_tangent)
     return _fit_recursive(points, left, right, max(tolerance, 1e-3), 0)
 
 
-def path_data(segments: list[np.ndarray], precision: int = 2) -> str:
+def circular_path(points: np.ndarray, tolerance: float, *, closed: bool = False) -> tuple[str, float] | None:
+    if len(points) < 8:
+        return None
+    centre = points.mean(axis=0)
+    relative = points - centre
+    design = np.column_stack([2.0 * relative, np.ones(len(points))])
+    solution, _residuals, rank, _singular = np.linalg.lstsq(
+        design, np.sum(relative * relative, axis=1), rcond=None
+    )
+    if rank < 3:
+        return None
+    centre += solution[:2]
+    radii = np.linalg.norm(points - centre, axis=1)
+    radius = float(np.mean(radii))
+    residual = float(np.sqrt(np.mean((radii - radius) ** 2)))
+    if radius <= 0 or residual > tolerance or np.max(np.abs(radii - radius)) > 2.0 * tolerance:
+        return None
+    angles = np.unwrap(np.arctan2(points[:, 1] - centre[1], points[:, 0] - centre[0]))
+    span = float(angles[-1] - angles[0])
+    if abs(span) < np.pi / 6 or (closed and abs(span) < 1.8 * np.pi):
+        return None
+    steps = np.diff(angles)
+    if np.sum(np.abs(steps)) > 1.1 * abs(span):
+        return None
+    start = centre + radius * np.array([np.cos(angles[0]), np.sin(angles[0])])
+    end = centre + radius * np.array([np.cos(angles[-1]), np.sin(angles[-1])])
+    sweep = int(span > 0)
+    command = f"M{start[0]:.2f} {start[1]:.2f}"
+    if closed:
+        opposite = 2.0 * centre - start
+        command += f" A{radius:.2f} {radius:.2f} 0 0 {sweep} {opposite[0]:.2f} {opposite[1]:.2f}"
+        command += f" A{radius:.2f} {radius:.2f} 0 0 {sweep} {start[0]:.2f} {start[1]:.2f} Z"
+    else:
+        command += f" A{radius:.2f} {radius:.2f} 0 {int(abs(span) > np.pi)} {sweep} {end[0]:.2f} {end[1]:.2f}"
+    return command, residual
+
+
+def path_data(segments: list[np.ndarray], precision: int = 2, *, closed: bool = False) -> str:
     def number(value: float) -> str:
         return f"{value:.{precision}f}".rstrip("0").rstrip(".") or "0"
 
@@ -306,4 +350,6 @@ def path_data(segments: list[np.ndarray], precision: int = 2) -> str:
             f"{number(control[2][0])} {number(control[2][1])} "
             f"{number(control[3][0])} {number(control[3][1])}"
         )
+    if closed:
+        commands.append("Z")
     return " ".join(commands)

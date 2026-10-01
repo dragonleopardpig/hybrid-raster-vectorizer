@@ -13,7 +13,7 @@ import numpy as np
 from . import ir
 from . import latex as tex
 from .components import Component, extract, median_text_height
-from .fitting import choose_model, fit_bezier, path_data
+from .fitting import choose_model, circular_path, fit_bezier, path_data
 from .fonts import FontFace, list_faces, match_font
 from .legend import Legend, assemble, find_unframed
 from .ocr import (
@@ -28,6 +28,7 @@ from .ocr import (
 )
 from .preprocess import Page, load_page
 from .primitives import Rule, TickSet, detect_rules, detect_ticks
+from .preserve import mask_path
 from .alphabet import apply as apply_alphabet
 from .alphabet import build_clusters, solve
 from .consensus import reconcile
@@ -54,18 +55,19 @@ from .shapes import (
 from .textlayout import Block, group_blocks, text_angle
 from .tracing import (
     Trace, arrowheads_on, merge_collinear, nearest_pen, partition, pen_set,
-    smooth_path, straighten, trace_strokes,
+    restore_contacts, smooth_path, straighten,
 )
 
 
 @dataclass
 class Options:
     deskew: bool = True
-    bezier_tolerance: float = 0.9
+    bezier_tolerance: float = 0.25
     model_tolerance: float = 0.5
     idealise: bool = True
     confidence_threshold: float = 0.55
     raster_fallback: bool = False
+    typeset_uncertain: bool = False
     substitute_glyphs: bool = False
     solve_alphabet: bool = False
     background: str | None = None
@@ -99,6 +101,8 @@ class Analysis:
     readings: dict[int, Reading] = field(default_factory=dict)
     prepared: list = field(default_factory=list)
     alternatives: dict[int, list[str]] = field(default_factory=dict)
+    label_reports: list[dict] = field(default_factory=list)
+    unassigned: list[Component] = field(default_factory=list)
 
 
 def analyse(path: Path, options: Options) -> Analysis:
@@ -139,6 +143,7 @@ def analyse(path: Path, options: Options) -> Analysis:
     # drawn straight.
     traces = merge_collinear(traces, tolerance=1.2 * page.stroke_width, reach=6.0 * page.stroke_width)
     traces = straighten(traces, tolerance=1.2 * page.stroke_width)
+    restore_contacts(traces, rules)
     blocks = group_blocks(leftovers, page.ink.shape, text_height, page.stroke_width)
 
     marker_sets, consumed = find_marker_sets(
@@ -168,10 +173,12 @@ def analyse(path: Path, options: Options) -> Analysis:
         if not (legend.blocks & spoken_for)
     ]
 
+    labelled = {id(component) for block in blocks for component in block.components}
+    unassigned = [component for component in leftovers if id(component) not in labelled]
     return Analysis(
         page, components, text_height, rules, ticks, traces, blocks,
         regions=regions, marker_sets=marker_sets, frames=frames, legends=legends,
-        dashed=dashed, pens=pens,
+        dashed=dashed, pens=pens, unassigned=unassigned,
     )
 
 
@@ -191,7 +198,7 @@ def read_blocks(analysis: Analysis, options: Options) -> None:
         best = None
         for angle in (slope, slope + 180.0):
             candidate = turned(crop, angle)
-            score = read_tesseract(candidate).confidence + upright_bias(candidate)
+            score = (read_tesseract(candidate).confidence or 0.0) + upright_bias(candidate)
             if best is None or score > best[0]:
                 best = (score, angle, candidate)
         _score, angle, candidate = best
@@ -230,7 +237,8 @@ def read_blocks(analysis: Analysis, options: Options) -> None:
                 analysis.readings[index] = reader.read(crops[index])
                 continue
             counts = Counter()
-            for variant in augmentations(crops[index], options.ensemble):
+            variants = augmentations(crops[index], options.ensemble)
+            for variant in variants:
                 text = reader.read(variant).text
                 if text:
                     counts[text] += 1
@@ -239,7 +247,7 @@ def read_blocks(analysis: Analysis, options: Options) -> None:
                 continue
             text, hits = counts.most_common(1)[0]
             analysis.readings[index] = Reading(
-                text, "formulaocr", hits / max(1, sum(counts.values()))
+                text, "formulaocr", None, consistency=hits / len(variants)
             )
             analysis.alternatives[index] = [
                 other for other, _n in counts.most_common()[1:]
@@ -252,7 +260,7 @@ def _prose_samples(analysis: Analysis) -> list[tuple[np.ndarray, str]]:
         reading = analysis.readings.get(index)
         if reading is None or reading.engine != "tesseract":
             continue
-        if reading.confidence < 0.6 or len(reading.text.replace(" ", "")) < 2:
+        if reading.confidence is None or reading.confidence < 0.6 or len(reading.text.replace(" ", "")) < 2:
             continue
         mask = np.zeros(analysis.page.ink.shape, dtype=np.uint8)
         for component in block.components:
@@ -277,10 +285,10 @@ def choose_fonts(analysis: Analysis, options: Options) -> tuple[FontSet | None, 
     return build_font_set(best_face.family, bold=best_face.bold, faces=faces), summary
 
 
-def _measure_node(reading: Reading, block: Block) -> tex.Row:
+def _measure_node(reading: Reading, block: Block, unknown: list[str] | None = None) -> tex.Row:
     if reading.engine == "tesseract":
         return tex.Row([tex.Run(reading.text, upright=True)])
-    return tex.parse(reading.text)
+    return tex.parse(reading.text, unknown=unknown)
 
 
 def _block_ink(page: Page, block: Block, angle: float | None = None) -> np.ndarray:
@@ -345,6 +353,7 @@ class Prepared:
     changes: list[str] = field(default_factory=list)
     unresolved: list[str] = field(default_factory=list)
     transform: str = ""
+    unknown: list[str] = field(default_factory=list)
 
     @property
     def pure_fraction(self) -> bool:
@@ -388,38 +397,67 @@ def _harmonise(prepared: list[Prepared], text_height: float) -> None:
             entry.size = common
 
 
-def _draw_instead(analysis: Analysis, block: Block) -> None:
-    """Draw a refused block's marks rather than losing them.
+def preserve_block(
+    analysis: Analysis, index: int, block: Block, options: Options, reasons: list[str]
+) -> ir.Element:
+    ink = _block_ink(analysis.page, block)
+    common = dict(
+        confidence=0.0, identifier=f"label-{index}", review_reasons=reasons,
+        provenance="original ink; recognition unverified", x=float(block.x), y=float(block.y),
+    )
+    if options.raster_fallback:
+        black = np.zeros_like(ink)
+        success, buffer = cv2.imencode(".png", cv2.merge([black, black, black, ink]))
+        if success:
+            return ir.RasterFallback(
+                kind="image", width=float(block.width), height=float(block.height),
+                png=buffer.tobytes(), **common,
+            )
+    return ir.VectorFallback(kind="preserved", path=mask_path(ink), **common)
 
-    A reading set six times the size of the page is a handful of stray marks
-    read as something, and setting it puts invented words across the figure. The
-    marks are still ink, though, and refusing the reading used to drop them: on
-    waves1.png that is the same marks going missing that the recogniser had just
-    invented a label out of. Trace them instead.
-    """
-    pen = analysis.page.stroke_width
-    for component in block.components:
-        for stroke in trace_strokes(component, shortest=3.0 * pen):
-            # Handed back after the pens were settled, so settle this one too.
-            if analysis.pens:
-                stroke.stroke_width = nearest_pen(stroke.stroke_width, analysis.pens)
-            analysis.traces.append(stroke)
+
+def label_report(
+    analysis: Analysis, index: int, block: Block, element: ir.Element,
+    entry: Prepared | None = None,
+) -> dict:
+    reading = analysis.readings.get(index)
+    return {
+        "id": element.identifier,
+        "box": [block.x, block.y, block.width, block.height],
+        "text": getattr(element, "plain", ""),
+        "source_reading": reading.text if reading else "",
+        "engine": reading.engine if reading else "",
+        "confidence": round(element.confidence, 2),
+        "reading_confidence": reading.confidence if reading else None,
+        "consistency": reading.consistency if reading else None,
+        "shape_score": round(entry.score, 3) if entry else None,
+        "corrections": "; ".join(entry.changes) if entry else "",
+        "other_readings": analysis.alternatives.get(index, []),
+        "ambiguous_glyphs": entry.unresolved if entry else [],
+        "unknown_commands": entry.unknown if entry else [],
+        "representation": {"label": "text", "image": "raster", "preserved": "vector"}[element.kind],
+        "review_reasons": list(element.review_reasons),
+    }
 
 
 def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) -> list[ir.Element]:
-    if fonts is None:
-        return []
-
     page = analysis.page
     prepared: list[Prepared] = []
+    labels: list[ir.Element] = []
+    analysis.label_reports = []
     for index, block in enumerate(analysis.blocks):
         reading = analysis.readings.get(index)
-        if reading is None or not reading.text:
+        if fonts is None or reading is None or not reading.text:
+            reasons = ["no usable font" if fonts is None else "empty OCR result"]
+            element = preserve_block(analysis, index, block, options, reasons)
+            labels.append(element)
+            analysis.label_reports.append(label_report(analysis, index, block, element))
             continue
 
         angle = analysis.rotations.get(index)
         ink = _block_ink(page, block, angle)
-        node = _measure_node(reading, block)
+        unknown: list[str] = []
+        node = _measure_node(reading, block, unknown)
         along = float(_ink_extent(ink)[0] if angle is not None else block.width)
         size, score = _best_size(node, fonts, ink, along)
 
@@ -445,11 +483,15 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
                     "why": "type size out of family with the page",
                 }
             )
-            _draw_instead(analysis, block)
+            element = preserve_block(analysis, index, block, options, ["implausible text layout"])
+            labels.append(element)
+            entry = Prepared(index, block, reading, node, size, score, unknown=unknown)
+            analysis.label_reports.append(label_report(analysis, index, block, element, entry))
             continue
 
         prepared.append(
-            Prepared(index=index, block=block, reading=reading, node=node, size=size, score=score)
+            Prepared(index=index, block=block, reading=reading, node=node, size=size, score=score,
+                     unknown=unknown)
         )
 
     _harmonise(prepared, analysis.text_height)
@@ -522,7 +564,6 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         if entry is not None:
             entry.changes.append(description)
 
-    labels: list[ir.Element] = []
     for entry in prepared:
         block, node, size = entry.block, entry.node, entry.size
         box = tex.layout(node, fonts.metrics, size)
@@ -531,7 +572,24 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         rendered = render_box(box, fonts)
         measured = _block_ink(page, block, analysis.rotations.get(entry.index))
         score = shape_iou(measured, rendered) if rendered is not None else entry.score
-        confidence = float(np.clip(0.35 + 0.9 * score, 0.0, 0.99))
+        confidence = entry.reading.confidence or 0.0
+        reasons = []
+        if entry.reading.confidence is None:
+            reasons.append("recognition confidence unavailable")
+        elif confidence < options.confidence_threshold:
+            reasons.append("low recognition confidence")
+        token = entry.reading.text.strip()
+        if entry.reading.engine == "tesseract" and len(token) == 1 and token.isalpha():
+            reasons.append("isolated letter may be a mathematical symbol")
+        if score < options.doubtful_shape:
+            reasons.append("poor visual match")
+        if entry.unknown:
+            reasons.append("unsupported formula commands")
+        if entry.reading.engine == "formulaocr" and entry.unresolved:
+            reasons.append("ambiguous formula glyphs")
+        if entry.reading.consistency is not None and entry.reading.consistency < 1.0:
+            reasons.append("OCR variants disagree")
+        entry.score = score
 
         # The face in hand is not the face on the page, so a run set with its
         # own advances ends short of the printed one: on complex.png the last
@@ -547,26 +605,11 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         if entry.pure_fraction and block.bars:
             x -= 0.5 * (spread - 1.0) * box.width
 
-        if confidence < options.confidence_threshold and options.raster_fallback:
-            alpha = _block_ink(page, block)
-            black = np.zeros_like(alpha)
-            success, buffer = cv2.imencode(".png", cv2.merge([black, black, black, alpha]))
-            if success:
-                labels.append(
-                    ir.RasterFallback(
-                        kind="image",
-                        confidence=confidence,
-                        provenance=f"{entry.reading.engine}: {entry.reading.text}",
-                        identifier=f"label-{entry.index}",
-                        x=float(block.x),
-                        y=float(block.y),
-                        width=float(block.width),
-                        height=float(block.height),
-                        png=buffer.tobytes(),
-                    )
-                )
-                entry.score = score
-                continue
+        if entry.unknown or (reasons and (not options.typeset_uncertain or options.raster_fallback)):
+            element = preserve_block(analysis, entry.index, block, options, reasons)
+            labels.append(element)
+            analysis.label_reports.append(label_report(analysis, entry.index, block, element, entry))
+            continue
 
         labels.append(
             ir.Label(
@@ -582,10 +625,12 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
                 engine=entry.reading.engine,
                 transform=entry.transform,
                 spread=spread,
+                review_reasons=reasons,
             )
         )
-        entry.score = score
+        analysis.label_reports.append(label_report(analysis, entry.index, block, labels[-1], entry))
     analysis.prepared = prepared
+    analysis.label_reports.sort(key=lambda record: int(record["id"].split("-")[-1]))
     return labels
 
 
@@ -624,25 +669,54 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
 
     for index, trace in enumerate(analysis.traces):
         points = trace.points
+        steps = np.diff(points[:, 0])
+        functional = not trace.closed and (np.all(steps >= 0) or np.all(steps <= 0))
         model = choose_model(
             points[:, 0], points[:, 1], tolerance=options.model_tolerance * trace.stroke_width
-        )
-        loose = choose_model(points[:, 0], points[:, 1], tolerance=4.0 * trace.stroke_width)
-        source = smooth_path(points, int(2.0 * trace.stroke_width) | 1)
+        ) if functional else None
+        loose = choose_model(points[:, 0], points[:, 1], tolerance=4.0 * trace.stroke_width) if functional else None
+        source = smooth_path(points, int(2.0 * trace.stroke_width) | 1, closed=trace.closed)
         if options.idealise and model is not None:
             grid = np.linspace(points[0, 0], points[-1, 0], max(256, points.shape[0]))
             source = np.column_stack([grid, model.sample(grid)])
 
-        segments = fit_bezier(source, options.bezier_tolerance * trace.stroke_width)
+        arc = circular_path(points, options.model_tolerance * trace.stroke_width, closed=trace.closed)
+        segments = []
+        remaining = source
+        start_tangent = None
+        contact_tangent = np.array([1.0, 0.0])
+        for contact in sorted(trace.contacts):
+            before = remaining[remaining[:, 0] < contact[0] - 3.0 * trace.stroke_width]
+            segments.extend(fit_bezier(
+                np.vstack([before, contact]), options.bezier_tolerance * trace.stroke_width,
+                start_tangent=start_tangent, end_tangent=contact_tangent,
+            ))
+            remaining = np.vstack([contact, remaining[remaining[:, 0] > contact[0] + 3.0 * trace.stroke_width]])
+            start_tangent = contact_tangent
+        segments.extend(fit_bezier(
+            remaining, options.bezier_tolerance * trace.stroke_width, start_tangent=start_tangent,
+        ))
+        path = path_data(segments, closed=trace.closed)
+        if len(points) == 2:
+            path = f"M{points[0, 0]:.2f} {points[0, 1]:.2f} L{points[1, 0]:.2f} {points[1, 1]:.2f}"
+        elif arc is not None and options.idealise and not trace.contacts and (model is None or trace.closed):
+            path = arc[0]
         described = model or loose
-        start_head, end_head = arrowheads_on(points, page.ink, trace.stroke_width)
+        own_ink = np.zeros_like(page.ink)
+        for component in trace.components:
+            window = own_ink[component.y:component.bottom, component.x:component.right]
+            np.maximum(window, component.mask, out=window)
+        head_points = points
+        if len(points) == 2:
+            head_points = np.linspace(points[0], points[-1], max(6, int(np.linalg.norm(points[-1] - points[0])) + 1))
+        start_head, end_head = (None, None) if trace.closed else arrowheads_on(head_points, own_ink, trace.stroke_width)
         elements.append(
             ir.Curve(
                 kind="curve",
                 confidence=0.95 if model is not None else 0.8,
                 provenance=f"trace:{trace.method}",
                 identifier=f"curve-{index}",
-                path=path_data(segments),
+                path=path,
                 stroke_width=trace.stroke_width,
                 model=described.description if described else "",
                 model_rms=described.rms if described else None,
@@ -662,7 +736,11 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
             {
                 "curve": index,
                 "points": int(points.shape[0]),
-                "segments": len(segments),
+                "segments": path.count("C") + path.count("A") + path.count("L"),
+                "rule_contacts": [list(contact) for contact in trace.contacts],
+                "closed": trace.closed,
+                "primitive": "line" if len(points) == 2 else "arc" if " A" in path else "bezier",
+                "endpoints": points[[0, -1]].round(2).tolist(),
                 "stroke_width": round(trace.stroke_width, 2),
                 "analytic_model": described.name if described else None,
                 "analytic_residual_px": round(described.rms, 2) if described else None,
@@ -752,6 +830,12 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 spacing=tick_set.spacing,
             )
         )
+    for index, component in enumerate(getattr(analysis, "unassigned", [])):
+        elements.append(ir.VectorFallback(
+            kind="preserved", identifier=f"unclassified-{index}", confidence=0.0,
+            review_reasons=["unclassified residual ink"], path=mask_path(component.mask),
+            x=float(component.x), y=float(component.y),
+        ))
     return elements, notes
 
 
@@ -838,8 +922,6 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
     read_blocks(analysis, options)
     fonts, ranking = choose_fonts(analysis, options)
 
-    # Labels first: a reading the page will not carry hands its block back to
-    # be drawn as the marks it is, and the geometry has to be built after that.
     labels = build_labels(analysis, fonts, options)
     geometry, curve_notes = build_geometry(analysis, options)
     geometry, labels = group_legends(analysis, geometry, labels)
@@ -944,33 +1026,18 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
             }
             for tick in analysis.ticks
         ],
-        "labels": [
-            {
-                "id": element.identifier,
-                "text": getattr(element, "plain", ""),
-                "engine": getattr(element, "engine", ""),
-                "confidence": round(element.confidence, 2),
-                "corrections": element.provenance,
-                "reading_confidence": round(
-                    next(
-                        (entry.reading.confidence for entry in analysis.prepared
-                         if f"label-{entry.index}" == element.identifier),
-                        0.0,
-                    ), 2,
-                ),
-                "other_readings": next(
-                    (analysis.alternatives.get(entry.index, []) for entry in analysis.prepared
-                     if f"label-{entry.index}" == element.identifier),
-                    [],
-                ),
-                "ambiguous_glyphs": next(
-                    (entry.unresolved for entry in analysis.prepared
-                     if f"label-{entry.index}" == element.identifier),
-                    [],
-                ),
-            }
-            for element in labels
-        ],
+        "labels": analysis.label_reports,
+        "quality": {
+            "label_blocks": len(analysis.blocks),
+            "labels_accounted_for": len(analysis.label_reports),
+            "typeset_labels": sum(record["representation"] == "text" for record in analysis.label_reports),
+            "preserved_labels": sum(record["representation"] != "text" for record in analysis.label_reports),
+            "unverified_labels": sum(bool(record["review_reasons"]) for record in analysis.label_reports),
+            "unclassified_components_preserved": len(analysis.unassigned),
+            "closed_curves": sum(trace.closed for trace in analysis.traces),
+            "curve_primitives": dict(Counter(note["primitive"] for note in curve_notes)),
+            "semantic_accuracy": None,
+        },
     }
 
     if options.verify:
@@ -981,10 +1048,11 @@ def convert(path: Path, options: Options | None = None) -> ir.Document:
                 for key, value in agreement(page.ink, rendered).items()
             }
 
-    low = [
+    low = [record["id"] for record in analysis.label_reports if record["review_reasons"]]
+    low += [
         element.identifier
-        for element in labels + geometry
-        if element.confidence < options.confidence_threshold
+        for element in geometry
+        if element.confidence < options.confidence_threshold or element.review_reasons
     ]
     document.report["needs_review"] = low
     document.report["not_labels"] = analysis.rejected

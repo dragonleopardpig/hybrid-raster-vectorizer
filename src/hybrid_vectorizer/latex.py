@@ -188,6 +188,7 @@ class _Parser:
         # An unknown command that wraps something is a style we do not model;
         # keep what it wraps rather than printing the command's own name.
         if self.peek() == "{":
+            self.unknown.append(name)
             return self.parse_atom() or Row([])
         # A bare command we do not know is a symbol we cannot draw. Setting its
         # name as a word puts "twoheadrightarrow" across the figure in place of

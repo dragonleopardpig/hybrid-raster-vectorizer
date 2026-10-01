@@ -1585,20 +1585,24 @@ class OutOfFamilyLabelTest(unittest.TestCase):
 
     def test_the_marks_of_a_refused_reading_are_drawn_instead(self):
         """Refusing the reading must not lose the ink it was read from."""
-        analysis, _labels = self._labelled(self.options)
-        self.assertTrue(analysis.rejected)
+        from hybrid_vectorizer.convert import _block_ink
+        from hybrid_vectorizer.ir import Document
+        from hybrid_vectorizer.refine import rasterise
 
-        drawn = np.zeros(analysis.page.ink.shape, np.uint8)
-        for trace in analysis.traces:
-            points = np.asarray(trace.points, np.int32)
-            cv2.polylines(drawn, [points], False, 255, max(1, int(trace.stroke_width) + 2))
+        analysis, labels = self._labelled(self.options)
+        self.assertTrue(analysis.rejected)
+        document = Document(width=analysis.page.width, height=analysis.page.height, labels=labels)
+        drawn = rasterise(document.to_svg(), analysis.page.width, analysis.page.height)
+        if drawn is None:
+            self.skipTest("SVG rasterizer unavailable")
 
         for entry in analysis.rejected:
-            x, y, width, height = (int(v) for v in entry["box"])
-            here = drawn[y : y + height, x : x + width]
-            self.assertTrue(
-                np.any(here), f"nothing drawn where {entry['reading']!r} was refused"
-            )
+            left, top, width, height = (int(value) for value in entry["box"])
+            block = next(block for block in analysis.blocks
+                         if [block.x, block.y, block.width, block.height] == entry["box"])
+            original = _block_ink(analysis.page, block)
+            here = drawn[top:top + height, left:left + width]
+            self.assertGreaterEqual(np.count_nonzero(here & original) / np.count_nonzero(original), 0.99)
 
     def test_raising_the_limit_lets_them_through(self):
         from hybrid_vectorizer.convert import Options

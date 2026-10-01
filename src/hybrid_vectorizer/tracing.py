@@ -11,6 +11,7 @@ from skimage.morphology import skeletonize
 from .components import Component, extract
 from .preprocess import Page
 from .primitives import Arrow, Rule, TickSet
+from .strokegraph import strokes as graph_strokes
 
 
 @dataclass
@@ -23,6 +24,8 @@ class Trace:
     method: str = "column"
     dash: float = 0.0
     gap: float = 0.0
+    closed: bool = False
+    contacts: list[tuple[float, float]] = field(default_factory=list)
 
     @property
     def start(self) -> np.ndarray:
@@ -190,64 +193,8 @@ def _covered_by(component: Component, points: np.ndarray, pen: float, least: flo
 def _skeleton_strokes(
     mask: np.ndarray, origin: tuple[int, int], shortest: float
 ) -> list[np.ndarray]:
-    """Every long stroke in the medial axis, not only the longest.
-
-    Where a drawing's strokes cross they are one component, and the longest path
-    through it is one stroke of however many were drawn. On wavefront.png the
-    sine, the two arrows, the axes and five plane outlines meet at 709
-    junctions in a single component, and taking the longest path threw away half
-    of its ink -- 77% of everything that figure failed to reproduce.
-
-    The longest path is taken as before, then lifted out, which leaves the rest
-    of the skeleton in pieces to be taken the same way. A piece shorter than the
-    pen can reach is a spur of the stain, not a stroke, and is dropped.
-    """
-    skeleton = skeletonize(mask > 0)
-    pixels = {(int(y), int(x)) for y, x in zip(*np.nonzero(skeleton))}
-    if len(pixels) < 2:
-        return []
-
-    def neighbours(node, within):
-        y, x = node
-        return [(y + dy, x + dx) for dy, dx in _NEIGHBOURS if (y + dy, x + dx) in within]
-
-    def sweep(source, within):
-        previous = {source: None}
-        queue = [source]
-        last = source
-        while queue:
-            node = queue.pop(0)
-            last = node
-            for candidate in neighbours(node, within):
-                if candidate not in previous:
-                    previous[candidate] = node
-                    queue.append(candidate)
-        return last, previous
-
-    x_offset, y_offset = origin
-    strokes: list[np.ndarray] = []
-    while pixels:
-        seed = next(iter(pixels))
-        _reached, seen = sweep(seed, pixels)
-        chunk = set(seen)
-        pixels -= chunk
-        if len(chunk) < shortest:
-            continue
-        ends = [node for node in chunk if len(neighbours(node, chunk)) == 1]
-        start = ends[0] if ends else next(iter(chunk))
-        far, _ = sweep(start, chunk)
-        other, previous = sweep(far, chunk)
-        path = []
-        node = other
-        while node is not None:
-            path.append(node)
-            node = previous[node]
-        if len(path) < max(2, int(shortest)):
-            continue
-        strokes.append(np.array([[x + x_offset, y + y_offset] for y, x in path], dtype=float))
-        # What the stroke did not cover is still skeleton, and still ink.
-        pixels |= chunk - set(path)
-    return strokes
+    """Follow branches through compatible tangents and retain closed cycles."""
+    return graph_strokes(mask, origin, shortest)
 
 
 def _across(ink: np.ndarray, point: np.ndarray, normal: np.ndarray, limit: int) -> int:
@@ -347,7 +294,8 @@ def trace_strokes(
             ]
 
     return [
-        Trace(points=points, stroke_width=pen, components=[component], method="skeleton")
+        Trace(points=points, stroke_width=pen, components=[component], method="skeleton",
+              closed=bool(np.array_equal(points[0], points[-1])))
         for points in _skeleton_strokes(component.mask, origin, max(2.0, shortest))
     ]
 
@@ -387,6 +335,37 @@ def chain(traces: list[Trace], *, maximum_gap: float) -> list[Trace]:
             )
         )
     return merged + other
+
+
+def restore_contacts(traces: list[Trace], rules: list[Rule]) -> None:
+    """Recover supported curve contacts hidden by an erased horizontal rule."""
+    for trace in traces:
+        points = trace.points
+        if trace.closed or trace.dash > 0 or trace.method != "column" or len(points) < 12:
+            continue
+        for index in np.flatnonzero(np.diff(points[:, 0]) > 1.5):
+            left, right = points[index], points[index + 1]
+            middle = float((left[0] + right[0]) / 2.0)
+            for rule in rules:
+                if rule.orientation != "horizontal" or not rule.start <= middle <= rule.end:
+                    continue
+                reach = trace.stroke_width + rule.thickness / 2.0
+                if max(abs(left[1] - rule.position), abs(right[1] - rule.position)) > 2.0 * reach:
+                    continue
+                selected = (np.abs(points[:, 0] - middle) < 7.0 * trace.stroke_width) & (
+                    np.abs(points[:, 1] - rule.position) > 2.0 * trace.stroke_width
+                )
+                samples = points[selected]
+                if len(samples) < 8 or not (samples[:, 0].min() < left[0] and samples[:, 0].max() > right[0]):
+                    continue
+                coefficients = np.polyfit(samples[:, 0] - middle, samples[:, 1], 2)
+                if abs(coefficients[0]) < 1e-6:
+                    continue
+                offset = -coefficients[1] / (2.0 * coefficients[0])
+                contact = middle + offset
+                height = float(np.polyval(coefficients, offset))
+                if left[0] <= contact <= right[0] and abs(height - rule.position) <= reach:
+                    trace.contacts.append((float(contact), rule.position))
 
 
 def follow_dashed_curves(
@@ -534,7 +513,7 @@ def merge_collinear(traces: list[Trace], tolerance: float, reach: float) -> list
     rest: list[Trace] = []
     for index, trace in enumerate(traces):
         found = _straight(trace.points, tolerance)
-        if found is None or trace.dash > 0:
+        if found is None or trace.dash > 0 or trace.closed:
             rest.append(trace)
         else:
             straight.append((index, found))
@@ -590,7 +569,7 @@ def straighten(traces: list[Trace], tolerance: float) -> list[Trace]:
     """
     drawn: list[Trace] = []
     for trace in traces:
-        found = _straight(trace.points, tolerance) if trace.dash <= 0 else None
+        found = _straight(trace.points, tolerance) if trace.dash <= 0 and not trace.closed else None
         if found is None:
             drawn.append(trace)
             continue
@@ -606,7 +585,7 @@ def straighten(traces: list[Trace], tolerance: float) -> list[Trace]:
     return drawn
 
 
-def smooth_path(points: np.ndarray, window: int) -> np.ndarray:
+def smooth_path(points: np.ndarray, window: int, *, closed: bool = False) -> np.ndarray:
     """Take the scan's wobble out of a curve without moving where it runs.
 
     A drawn curve that fits no line or polynomial was written out through every
@@ -617,6 +596,12 @@ def smooth_path(points: np.ndarray, window: int) -> np.ndarray:
     if window < 3 or points.shape[0] < window + 2:
         return points
     kernel = np.ones(window) / float(window)
+    if closed:
+        padded = np.pad(points[:-1], ((window // 2, window // 2), (0, 0)), mode="wrap")
+        smoothed = np.column_stack([
+            np.convolve(padded[:, coordinate], kernel, mode="valid") for coordinate in (0, 1)
+        ])
+        return np.vstack([smoothed, smoothed[:1]])
     inner = np.column_stack([
         np.convolve(points[:, 0], kernel, mode="valid"),
         np.convolve(points[:, 1], kernel, mode="valid"),
@@ -644,8 +629,9 @@ def pen_set(widths: list[float], fallback: float, apart: float = 1.55) -> list[f
     return [float(np.median([w for w in values if w < apart * light])), float(np.median(heavy))]
 
 
-def nearest_pen(width: float, pens: list[float]) -> float:
-    return min(pens, key=lambda pen: abs(pen - width))
+def nearest_pen(width: float, pens: list[float], relative_limit: float = 0.15) -> float:
+    nearest = min(pens, key=lambda pen: abs(pen - width))
+    return nearest if abs(nearest - width) <= relative_limit * width else width
 
 
 def partition(

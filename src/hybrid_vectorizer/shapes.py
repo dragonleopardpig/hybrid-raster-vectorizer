@@ -634,6 +634,8 @@ def find_marker_sets(
             continue
         reference = max((component for _index, component in group), key=lambda item: item.area)
         shape = outline(reference, stroke_width)
+        if shape is None or shape.kind not in {"circle", "rectangle", "triangle"}:
+            continue
         sets.append(
             MarkerSet(
                 shape=shape.kind if shape else "freeform",
