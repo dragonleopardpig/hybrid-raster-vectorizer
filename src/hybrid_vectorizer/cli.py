@@ -57,6 +57,7 @@ def _run_convert(args: argparse.Namespace) -> None:
         largest_label=args.largest_label,
         raster_fallback=args.raster_fallback,
         typeset_uncertain=args.typeset_uncertain,
+        preserve_uncertain=args.preserve_uncertain,
         substitute_glyphs=args.substitute_glyphs,
         solve_alphabet=args.solve_alphabet,
         font_family=args.font,
@@ -248,11 +249,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     convert_parser.add_argument(
         "--raster-fallback", action="store_true",
-        help="Preserve uncertain labels as embedded pixels instead of vector contours",
+        help="Keep a preserved label as embedded pixels instead of vector contours "
+             "(does not change which labels are preserved)",
     )
-    convert_parser.add_argument(
+    certainty = convert_parser.add_mutually_exclusive_group()
+    certainty.add_argument(
+        "--preserve-uncertain", action="store_true",
+        help="Preserve any label with a review reason as its original ink instead of typesetting it",
+    )
+    certainty.add_argument(
         "--typeset-uncertain", action="store_true",
-        help="Typeset unverified OCR guesses instead of preserving their original vector outlines",
+        help="Also typeset a label whose rendered shape matches its ink poorly; labels with "
+             "unknown LaTeX commands or a foreign script are still preserved",
     )
     convert_parser.add_argument(
         "--substitute-glyphs", action="store_true",

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import re
+import unicodedata
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -68,6 +70,7 @@ class Options:
     confidence_threshold: float = 0.55
     raster_fallback: bool = False
     typeset_uncertain: bool = False
+    preserve_uncertain: bool = False
     substitute_glyphs: bool = False
     solve_alphabet: bool = False
     background: str | None = None
@@ -285,6 +288,48 @@ def choose_fonts(analysis: Analysis, options: Options) -> tuple[FontSet | None, 
     return build_font_set(best_face.family, bold=best_face.bold, faces=faces), summary
 
 
+# Letters a scientific figure in a Latin-script publication can carry: Latin
+# with its extensions, Greek, letterlike and mathematical alphanumeric symbols.
+# Anything else that is a letter -- CJK ideographs, kana, Hangul, Cyrillic,
+# Arabic, Hebrew, Thai, Devanagari -- cannot be on the page, so a reading that
+# contains one is describing something other than the ink.
+_PLAUSIBLE_LETTER_RANGES = (
+    (0x0000, 0x024F),  # Basic Latin, Latin-1 Supplement, Latin Extended-A/B
+    (0x0250, 0x02AF),  # IPA Extensions (used for a few phonetic symbols)
+    (0x0370, 0x03FF),  # Greek and Coptic
+    (0x1E00, 0x1EFF),  # Latin Extended Additional
+    (0x1F00, 0x1FFF),  # Greek Extended
+    (0x2100, 0x214F),  # Letterlike Symbols (ℏ, ℓ, ℜ, ...)
+    (0x2C60, 0x2C7F),  # Latin Extended-C
+    (0xA720, 0xA7FF),  # Latin Extended-D
+    (0x1D400, 0x1D7FF),  # Mathematical Alphanumeric Symbols
+)
+
+
+def foreign_script(text: str) -> list[str]:
+    """The characters of ``text`` from a script that cannot occur in this figure.
+
+    PP-FormulaNet is a multilingual model and, shown a stain or a speck, it
+    hallucinates CJK ideographs with the same assurance it reads ``x+iy``.
+    Nothing downstream can set those as the figure's type, and a reading that
+    contains them is a measured disagreement with the page, not an uncertain
+    guess. Letters and non-ASCII digits outside the Latin, Greek and
+    mathematical ranges are reported; punctuation, operators, combining
+    accents and LaTeX commands are not, so ``\\frac{a}{b}``, ``λ_0`` and
+    ``x+iy`` are clean.
+    """
+    offending: list[str] = []
+    for character in text:
+        category = unicodedata.category(character)
+        if category.startswith("L"):
+            point = ord(character)
+            if not any(low <= point <= high for low, high in _PLAUSIBLE_LETTER_RANGES):
+                offending.append(character)
+        elif category == "Nd" and not character.isascii():
+            offending.append(character)
+    return offending
+
+
 def _measure_node(reading: Reading, block: Block, unknown: list[str] | None = None) -> tex.Row:
     if reading.engine == "tesseract":
         return tex.Row([tex.Run(reading.text, upright=True)])
@@ -454,6 +499,15 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
             analysis.label_reports.append(label_report(analysis, index, block, element))
             continue
 
+        foreign = foreign_script(reading.text)
+        if foreign:
+            # Not uncertain: no font on the page could have set these glyphs,
+            # so the ink is kept and the reading goes to the report as-is.
+            element = preserve_block(analysis, index, block, options, ["foreign script in reading"])
+            labels.append(element)
+            analysis.label_reports.append(label_report(analysis, index, block, element))
+            continue
+
         angle = analysis.rotations.get(index)
         ink = _block_ink(page, block, angle)
         unknown: list[str] = []
@@ -572,7 +626,16 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         rendered = render_box(box, fonts)
         measured = _block_ink(page, block, analysis.rotations.get(entry.index))
         score = shape_iou(measured, rendered) if rendered is not None else entry.score
-        confidence = entry.reading.confidence or 0.0
+        # PP-FormulaNet's worker supplies no probability. The element still
+        # needs a confidence a reader can act on, and the one measurement in
+        # hand is how well the typeset shape covers the ink; 0.00 on every
+        # formula label said "unreadable" about labels that were set correctly.
+        # The report keeps reading_confidence None so the estimate is never
+        # mistaken for the recogniser's own.
+        if entry.reading.confidence is None:
+            confidence = float(np.clip(0.35 + 0.9 * score, 0.0, 0.99))
+        else:
+            confidence = entry.reading.confidence
         reasons = []
         if entry.reading.confidence is None:
             reasons.append("recognition confidence unavailable")
@@ -605,7 +668,16 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
         if entry.pure_fraction and block.bars:
             x -= 0.5 * (spread - 1.0) * box.width
 
-        if entry.unknown or (reasons and (not options.typeset_uncertain or options.raster_fallback)):
+        # A reason is a review flag, not a verdict. The label is typeset once
+        # its reading is non-empty, its rendered shape covers the ink and it
+        # parses; the ink is kept only on a measured disagreement -- a command
+        # nothing can set, or a shape that does not look like the page. Under
+        # the old rule every formula label was kept as ink because the worker
+        # reports no probability, and an SVG that keeps pixel contours where
+        # its text was is a traced bitmap, which is what this tool is not.
+        poor_match = score < options.doubtful_shape
+        disagreement = bool(entry.unknown) or (poor_match and not options.typeset_uncertain)
+        if disagreement or (options.preserve_uncertain and reasons):
             element = preserve_block(analysis, entry.index, block, options, reasons)
             labels.append(element)
             analysis.label_reports.append(label_report(analysis, entry.index, block, element, entry))
@@ -632,6 +704,32 @@ def build_labels(analysis: Analysis, fonts: FontSet | None, options: Options) ->
     analysis.prepared = prepared
     analysis.label_reports.sort(key=lambda record: int(record["id"].split("-")[-1]))
     return labels
+
+
+def _split_at_contact(
+    samples: np.ndarray, column: float, clearance: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Samples left and right of a rule contact, clear of the merge window.
+
+    Points within ``clearance`` of the contact are normally dropped so the
+    curve's tangent at the contact comes from the constraint rather than from
+    the stroke thickening into the axis. When a side has fewer than two
+    samples left after that, it is a stroke ending just past the contact, and
+    every sample on that side is kept so the tail is drawn.
+    """
+    before = samples[samples[:, 0] < column - clearance]
+    if before.shape[0] < 2:
+        before = samples[samples[:, 0] < column]
+    after = samples[samples[:, 0] > column + clearance]
+    if after.shape[0] < 2:
+        after = samples[samples[:, 0] > column]
+    return before, after
+
+
+def _arc_radius(path: str) -> float:
+    """The radius drawn by an SVG arc path, read from its first ``A`` command."""
+    match = re.search(r"A([0-9.]+) ", path)
+    return float(match.group(1)) if match else 0.0
 
 
 def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Element], list[dict]]:
@@ -686,22 +784,42 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
         start_tangent = None
         contact_tangent = np.array([1.0, 0.0])
         for contact in sorted(trace.contacts):
-            before = remaining[remaining[:, 0] < contact[0] - 3.0 * trace.stroke_width]
+            # Samples within three pen widths of the contact are the stroke
+            # merging into the axis and are left to the tangent constraint. A
+            # stroke that ENDS inside that window has nothing else on that
+            # side, and dropping the samples lost its tail: a parabola traced
+            # to x=54 past a contact at x=50 was drawn ending at the contact.
+            before, after = _split_at_contact(remaining, contact[0], 3.0 * trace.stroke_width)
             segments.extend(fit_bezier(
                 np.vstack([before, contact]), options.bezier_tolerance * trace.stroke_width,
                 start_tangent=start_tangent, end_tangent=contact_tangent,
             ))
-            remaining = np.vstack([contact, remaining[remaining[:, 0] > contact[0] + 3.0 * trace.stroke_width]])
+            remaining = np.vstack([contact, after])
             start_tangent = contact_tangent
         segments.extend(fit_bezier(
             remaining, options.bezier_tolerance * trace.stroke_width, start_tangent=start_tangent,
         ))
         path = path_data(segments, closed=trace.closed)
+        used_arc = False
         if len(points) == 2:
             path = f"M{points[0, 0]:.2f} {points[0, 1]:.2f} L{points[1, 0]:.2f} {points[1, 1]:.2f}"
         elif arc is not None and options.idealise and not trace.contacts and (model is None or trace.closed):
             path = arc[0]
+            used_arc = True
         described = model or loose
+        # When the arc is what gets drawn, the arc is the model. Reporting the
+        # polynomial that failed instead described a drawn circle as a
+        # degree-5 fit outside tolerance.
+        if used_arc:
+            model_name = "circle"
+            model_description = f"circle r={_arc_radius(path):.2f}"
+            model_rms: float | None = arc[1]
+            within_tolerance = True
+        else:
+            model_name = described.name if described else None
+            model_description = described.description if described else ""
+            model_rms = described.rms if described else None
+            within_tolerance = model is not None
         own_ink = np.zeros_like(page.ink)
         for component in trace.components:
             window = own_ink[component.y:component.bottom, component.x:component.right]
@@ -718,8 +836,8 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 identifier=f"curve-{index}",
                 path=path,
                 stroke_width=trace.stroke_width,
-                model=described.description if described else "",
-                model_rms=described.rms if described else None,
+                model=model_description,
+                model_rms=model_rms,
                 arrow_start=start_head is not None,
                 arrow_end=end_head is not None,
                 arrow_length=max(
@@ -742,9 +860,9 @@ def build_geometry(analysis: Analysis, options: Options) -> tuple[list[ir.Elemen
                 "primitive": "line" if len(points) == 2 else "arc" if " A" in path else "bezier",
                 "endpoints": points[[0, -1]].round(2).tolist(),
                 "stroke_width": round(trace.stroke_width, 2),
-                "analytic_model": described.name if described else None,
-                "analytic_residual_px": round(described.rms, 2) if described else None,
-                "within_tolerance": model is not None,
+                "analytic_model": model_name,
+                "analytic_residual_px": round(model_rms, 2) if model_rms is not None else None,
+                "within_tolerance": within_tolerance,
                 "arrowheads": int(start_head is not None) + int(end_head is not None),
                 "dashed": trace.dash > 0,
             }

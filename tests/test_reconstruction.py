@@ -168,11 +168,14 @@ class PreservationTest(unittest.TestCase):
             self.skipTest('test font unavailable')
         analysis = self.analysis(Reading('x', 'formulaocr', None))
         labels = build_labels(analysis, fonts, Options())
-        self.assertIsInstance(labels[0], ir.VectorFallback)
+        self.assertIsInstance(labels[0], ir.Label)
         self.assertIsNone(analysis.label_reports[0]['reading_confidence'])
         self.assertIn('recognition confidence unavailable', labels[0].review_reasons)
-        labels = build_labels(analysis, fonts, Options(typeset_uncertain=True))
-        self.assertIsInstance(labels[0], ir.Label)
+        self.assertIn('recognition confidence unavailable',
+                      analysis.label_reports[0]['review_reasons'])
+        labels = build_labels(analysis, fonts, Options(preserve_uncertain=True))
+        self.assertIsInstance(labels[0], ir.VectorFallback)
+        self.assertIsNone(analysis.label_reports[0]['reading_confidence'])
         self.assertIn('recognition confidence unavailable', labels[0].review_reasons)
 
     def test_confident_isolated_letters_are_not_proof_of_symbol_identity(self):
@@ -181,6 +184,10 @@ class PreservationTest(unittest.TestCase):
             self.skipTest('test font unavailable')
         analysis = self.analysis(Reading('A', 'tesseract', 0.99))
         labels = build_labels(analysis, fonts, Options())
+        self.assertIn('isolated letter may be a mathematical symbol', labels[0].review_reasons)
+        self.assertIn('isolated letter may be a mathematical symbol',
+                      analysis.label_reports[0]['review_reasons'])
+        labels = build_labels(analysis, fonts, Options(preserve_uncertain=True))
         self.assertIsInstance(labels[0], ir.VectorFallback)
         self.assertIn('isolated letter may be a mathematical symbol', labels[0].review_reasons)
 

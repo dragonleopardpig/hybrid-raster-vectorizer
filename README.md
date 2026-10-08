@@ -12,27 +12,45 @@ That works from an ordinary terminal: the wrapper re-enters the dev shell itself
 if it is not already in one. Everything runs offline once the OCR model is
 present.
 
-## Conservative reconstruction
+## Verified text, preserved ink
 
-The converter now preserves an uncertain label as **vector contours of its
-original ink**. It keeps the OCR candidate in the JSON report, but does not
-print that candidate as if it were verified. Empty OCR results, unavailable
-fonts, unsupported formula commands, and rejected layouts follow the same
-preservation path. Holes, isolated dots, and small marks are retained. These
-contours remain fully vector; their character identity is still unresolved.
+A label is **typeset** when its reading is non-empty, every LaTeX command in it
+is one the renderer can set, its script could occur on the page, and the
+rendered shape covers the ink (`shape_score` at or above 0.20). The result is
+editable text in the matched font — the point of the exercise. An SVG that kept
+pixel contours wherever the text was would be a traced bitmap.
 
-PP-FormulaNet's worker does not supply a recognition probability. Its
-`reading_confidence` is therefore `null`, not a fabricated 0.75. Repeated OCR
-passes report `consistency` separately; agreement between passes is not proof
-of correctness. `shape_score` reports visual resemblance separately from
-recognition evidence. `needs_review` includes uncertain labels inside legends.
-Isolated letters are also reviewed: high Tesseract confidence alone cannot
-distinguish a Latin letter from a similar mathematical symbol such as λ.
+A label is **preserved as vector contours of its original ink** only on a
+measured disagreement with the page: an empty OCR result, no usable font, a
+LaTeX command nothing can set, a type size out of family with the page, a
+rendered shape that does not look like the ink, or a reading in a script that
+cannot occur in the figure (PP-FormulaNet hallucinates CJK ideographs on a
+stain). Holes, isolated dots, and small marks are retained in these contours;
+the OCR candidate stays in the JSON report as `source_reading`.
 
-Use `--typeset-uncertain` to explicitly render tentative readings as editable
-text. Unsupported commands and empty readings are still preserved. Use
-`--raster-fallback` to preserve uncertain labels as embedded pixels instead of
-vector contours. The default output contains no embedded raster images.
+Everything else about a reading is a **review flag**, recorded on the element
+(`data-review`) and in the report (`review_reasons`, `needs_review`), and does
+not by itself keep the ink. PP-FormulaNet's worker supplies no recognition
+probability, so its `reading_confidence` is `null`, not a fabricated 0.75, and
+every formula label carries `recognition confidence unavailable`; the element's
+own `confidence` is then estimated from the shape agreement
+(`0.35 + 0.9 × shape_score`, capped at 0.99); the report's
+`reading_confidence: null` beside it says the estimate is not the recogniser's
+own. Repeated OCR passes report `consistency` separately, and
+disagreement between them is flagged; agreement is not proof of correctness. An
+isolated Tesseract letter is flagged because high confidence alone cannot
+distinguish a Latin letter from a similar mathematical symbol such as λ. A
+recognition score below `--confidence` is flagged. `needs_review` includes
+flagged labels inside legends.
+
+Two flags move that line. `--preserve-uncertain` keeps the ink of any label
+with a review reason — the earlier, conservative behaviour, which typeset no
+formula label at all. `--typeset-uncertain` goes the other way and also
+typesets a label whose rendered shape matches its ink poorly; a label with an
+unknown command or a foreign script is still preserved. `--raster-fallback`
+changes only how a preserved label is kept — embedded pixels instead of vector
+contours — not which labels are preserved. The default output contains no
+embedded raster images.
 
 The stroke tracer follows branches through junctions using tangent continuity
 and preserves closed loops. Straight strokes use line commands, circular arcs
@@ -319,8 +337,10 @@ What *is* used instead:
   full stop. At 0.75 it claimed a letter out of the caption.
 - **Honest flagging.** Glyphs in a confusable set are listed in the report, as
   are glyphs that touch a neighbour and so could not be checked against the ink
-  at all. `--raster-fallback` embeds the original pixels for any label below the
-  confidence threshold.
+  at all. A flag is recorded, not acted on: the label is still typeset unless
+  its shape or its commands disagree with the page, or `--preserve-uncertain`
+  asks for the ink. `--raster-fallback` only swaps a preserved label's vector
+  contours for its original pixels.
 
 Font matching ranks installed families against confidently-read prose. On the
 example it picks TeX Gyre Bonum at a score of 0.53 — a weak match, reported as
@@ -382,10 +402,11 @@ hybrid-vectorizer render examples/interference/spec.json -o build/result.svg
 | `--trace-ink` | follow measured curves instead of accepted analytic models |
 | `--font FAMILY` | force a font family instead of matching one |
 | `--bezier-tolerance F` | curve fit tolerance as a fraction of the pen width (default 0.25) |
-| `--confidence F` | below this recognition score, preserve and flag a label (default 0.55); unknown confidence always needs review |
+| `--confidence F` | below this recognition score, flag a label for review (default 0.55); an unavailable score is flagged too; neither alone preserves the ink |
 | `--largest-label F` | refuse a reading needing type more than F times the page's text height (default 3.5) |
-| `--raster-fallback` | preserve uncertain labels as pixels instead of vector contours |
-| `--typeset-uncertain` | render tentative OCR text while retaining review warnings |
+| `--raster-fallback` | keep a preserved label as pixels instead of vector contours; does not change which labels are preserved |
+| `--preserve-uncertain` | preserve any label with a review reason as its original ink (the earlier conservative default) |
+| `--typeset-uncertain` | also typeset a label whose shape matches its ink poorly; unknown commands and foreign scripts are still preserved |
 | `--background COLOR` | paint a solid page instead of leaving it transparent |
 | `--ensemble N` | read each formula N ways and report how often they agree |
 | `--substitute-glyphs` | per-glyph correction against installed fonts (measured unreliable) |
