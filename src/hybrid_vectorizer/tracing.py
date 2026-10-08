@@ -172,9 +172,6 @@ def _trace_axis(mask: np.ndarray, origin: tuple[int, int], *, by_column: bool, l
     return np.column_stack([np.asarray(across) + x_offset, np.asarray(along) + y_offset])
 
 
-_NEIGHBOURS = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-
-
 def _covered_by(component: Component, points: np.ndarray, pen: float, least: float = 0.85) -> bool:
     """Does this one stroke actually draw the component it stands for?
 
@@ -338,7 +335,22 @@ def chain(traces: list[Trace], *, maximum_gap: float) -> list[Trace]:
 
 
 def restore_contacts(traces: list[Trace], rules: list[Rule]) -> None:
-    """Recover supported curve contacts hidden by an erased horizontal rule."""
+    """Recover supported curve contacts hidden by an erased horizontal rule.
+
+    Erasing an axis takes the ink of every curve that rests on it with it, so a
+    column trace arrives with a gap where the contact was. The curve either
+    side of the gap is fitted with a parabola and its vertex, when it lands in
+    the gap at the rule's height, is the hidden contact. The fit takes the
+    seven pen widths of curve beyond each flank of the gap: the erased band
+    already removed the points inside it, and a "well clear of the rule"
+    filter inside a window measured from the gap's middle left a gentle contact
+    (y = 200 - 0.01 (x - 300)^2 on a 3 px rule, pen 4) with no samples at all,
+    while a gentler one (0.005) opens a 49 px gap that such a window cannot
+    even reach past, so the common curve-resting-on-the-axis case was never
+    recovered. One gap yields at most one contact, from the rule nearest its
+    flanking points: two axes a pixel apart otherwise both appended a contact,
+    and the near-duplicate became a one-point segment downstream.
+    """
     for trace in traces:
         points = trace.points
         if trace.closed or trace.dash > 0 or trace.method != "column" or len(points) < 12:
@@ -346,26 +358,35 @@ def restore_contacts(traces: list[Trace], rules: list[Rule]) -> None:
         for index in np.flatnonzero(np.diff(points[:, 0]) > 1.5):
             left, right = points[index], points[index + 1]
             middle = float((left[0] + right[0]) / 2.0)
+            candidates: list[tuple[float, Rule]] = []
             for rule in rules:
                 if rule.orientation != "horizontal" or not rule.start <= middle <= rule.end:
                     continue
                 reach = trace.stroke_width + rule.thickness / 2.0
-                if max(abs(left[1] - rule.position), abs(right[1] - rule.position)) > 2.0 * reach:
-                    continue
-                selected = (np.abs(points[:, 0] - middle) < 7.0 * trace.stroke_width) & (
-                    np.abs(points[:, 1] - rule.position) > 2.0 * trace.stroke_width
-                )
-                samples = points[selected]
-                if len(samples) < 8 or not (samples[:, 0].min() < left[0] and samples[:, 0].max() > right[0]):
-                    continue
-                coefficients = np.polyfit(samples[:, 0] - middle, samples[:, 1], 2)
-                if abs(coefficients[0]) < 1e-6:
-                    continue
-                offset = -coefficients[1] / (2.0 * coefficients[0])
-                contact = middle + offset
-                height = float(np.polyval(coefficients, offset))
-                if left[0] <= contact <= right[0] and abs(height - rule.position) <= reach:
-                    trace.contacts.append((float(contact), rule.position))
+                distance = max(abs(left[1] - rule.position), abs(right[1] - rule.position))
+                if distance <= 2.0 * reach:
+                    candidates.append((float(distance), rule))
+            if not candidates:
+                continue
+            _, rule = min(candidates, key=lambda candidate: candidate[0])
+            reach = trace.stroke_width + rule.thickness / 2.0
+            margin = 7.0 * trace.stroke_width
+            # The stroke thickens into the axis just outside the erased band and
+            # those points sit pulled toward the rule, so they stay out of the fit.
+            samples = points[
+                (points[:, 0] > left[0] - margin) & (points[:, 0] < right[0] + margin)
+                & (np.abs(points[:, 1] - rule.position) > 2.0 * trace.stroke_width)
+            ]
+            if len(samples) < 8 or not (samples[:, 0].min() < left[0] and samples[:, 0].max() > right[0]):
+                continue
+            coefficients = np.polyfit(samples[:, 0] - middle, samples[:, 1], 2)
+            if abs(coefficients[0]) < 1e-6:
+                continue
+            offset = -coefficients[1] / (2.0 * coefficients[0])
+            contact = middle + offset
+            height = float(np.polyval(coefficients, offset))
+            if left[0] <= contact <= right[0] and abs(height - rule.position) <= reach:
+                trace.contacts.append((float(contact), rule.position))
 
 
 def follow_dashed_curves(
@@ -595,6 +616,11 @@ def smooth_path(points: np.ndarray, window: int, *, closed: bool = False) -> np.
     """
     if window < 3 or points.shape[0] < window + 2:
         return points
+    if closed:
+        # Wrap padding adds `window` rows and the valid convolution removes
+        # `window - 1`, so an even window handed back one point too many (a
+        # 41-point loop smoothed with window 6 came back with 42).
+        window |= 1
     kernel = np.ones(window) / float(window)
     if closed:
         padded = np.pad(points[:-1], ((window // 2, window // 2), (0, 0)), mode="wrap")
@@ -629,8 +655,25 @@ def pen_set(widths: list[float], fallback: float, apart: float = 1.55) -> list[f
     return [float(np.median([w for w in values if w < apart * light])), float(np.median(heavy))]
 
 
-def nearest_pen(width: float, pens: list[float], relative_limit: float = 0.15) -> float:
-    nearest = min(pens, key=lambda pen: abs(pen - width))
+def nearest_pen(width: float, pens: list[float], relative_limit: float = 0.35) -> float:
+    """The pen a measured stroke width was drawn with.
+
+    A figure is drawn with one pen, so its lines must not come back in several
+    widths. ``pen_set`` groups measured widths whose ratio is within 1.55, which
+    lets a member sit 25-35 % from its group's median; the earlier 15 % limit
+    left those unsnapped and a single axis broken by the scan was redrawn thick
+    here and thin there. A width under 1.5 px is not a thinner pen but a
+    measurement failure (a broken axis measured 1 px, so it rendered as a
+    hairline) and takes the lightest pen; the floor is absolute because
+    ``pen_set`` never splits a lighter group off the median, so a minority of
+    3 px axes beside 8 px curves has no pen of its own and must keep its width. A width further than the limit
+    from every pen, such as a 5 px axis beside 7.9 px curves, keeps its own.
+    Ties fall to the lighter pen.
+    """
+    lightest = min(pens)
+    if width < 1.5:
+        return lightest
+    nearest = min(pens, key=lambda pen: (abs(pen - width), pen))
     return nearest if abs(nearest - width) <= relative_limit * width else width
 
 
