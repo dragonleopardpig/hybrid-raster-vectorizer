@@ -9,12 +9,31 @@ from pathlib import Path
 import cv2
 
 from hybrid_vectorizer.convert import Options, convert
-from hybrid_vectorizer.evaluation import evaluate
+from hybrid_vectorizer.evaluation import evaluate, unique_output_names
 from hybrid_vectorizer.preprocess import load_page
 from hybrid_vectorizer.refine import agreement, rasterise
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def render_preview(svg_path: Path, png_path: Path) -> None:
+    """Rasterise the conversion for eyeballing; never fail the run over it.
+
+    With --reports-only the SVG may not exist (an earlier run kept only the
+    report), and the record is already scored by the time we get here, so a
+    missing file or a renderer failure is a note, not an exception.
+    """
+    renderer = shutil.which('resvg')
+    if not renderer:
+        return
+    if not svg_path.exists():
+        print(f'no preview: {svg_path} is absent', flush=True)
+        return
+    completed = subprocess.run([renderer, '--quiet', '--background', 'white', str(svg_path), str(png_path)],
+                               check=False)
+    if completed.returncode != 0:
+        print(f'no preview: resvg exited {completed.returncode} on {svg_path}', flush=True)
 
 
 def main():
@@ -28,13 +47,8 @@ def main():
     directory.mkdir(parents=True, exist_ok=True)
     references = json.loads(arguments.references.read_text())
     summary = []
-    names = set()
-    for source in arguments.images:
-        source = source.resolve()
-        name = source.parent.name if source.stem in {'raster', 'figure'} else source.stem
-        if name in names:
-            raise SystemExit(f'Duplicate output name {name!r}; evaluate these inputs separately')
-        names.add(name)
+    sources = [source.resolve() for source in arguments.images]
+    for source, name in zip(sources, unique_output_names(sources)):
         report_path = directory / f'{name}.report.json'
         if arguments.reports_only:
             report = json.loads(report_path.read_text())
@@ -49,7 +63,7 @@ def main():
         record = {'source': str(source), 'hybrid': report.get('agreement'), 'quality': report.get('quality')}
         key = str(source.relative_to(ROOT)) if source.is_relative_to(ROOT) else str(source)
         if key in references:
-            record['semantic'] = evaluate(report, references[key])
+            record['semantic'] = evaluate(report, references[key], figure=key)
         potrace = shutil.which('potrace')
         if potrace:
             bitmap = directory / f'{name}.pbm'
@@ -59,10 +73,7 @@ def main():
             rendered = rasterise(output.read_text(), page.width, page.height)
             if rendered is not None:
                 record['potrace'] = agreement(page.ink, rendered)
-        renderer = shutil.which('resvg')
-        if renderer:
-            subprocess.run([renderer, '--quiet', '--background', 'white',
-                            str(directory / f'{name}.svg'), str(directory / f'{name}.png')], check=True)
+        render_preview(directory / f'{name}.svg', directory / f'{name}.png')
         summary.append(record)
         (directory / 'benchmark.json').write_text(json.dumps(summary, ensure_ascii=False, indent=2))
         semantic = record.get('semantic', {})
