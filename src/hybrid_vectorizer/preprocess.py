@@ -22,6 +22,7 @@ class Page:
     background: str
     source_path: Path
     paper_spread: int = 0
+    raw_gray: np.ndarray | None = None
 
     @property
     def height(self) -> int:
@@ -263,13 +264,14 @@ def load_page(path: Path, *, deskew: bool = True, skew_tolerance: float = 0.1) -
     if raw is None:
         raise SystemExit(f"Not a readable image: {path}")
 
-    gray = _to_gray(raw)
-    gray, spread = flatten(gray)
+    scanned = _to_gray(raw)
+    gray, spread = flatten(scanned)
     ink = despeckle(_binarise(gray))
 
     skew = estimate_skew(ink) if deskew else 0.0
     if deskew and abs(skew) > skew_tolerance:
         gray = _rotate(gray, skew, border=255)
+        scanned = _rotate(scanned, skew, border=255)
         ink = despeckle(_binarise(gray))
     else:
         skew = 0.0
@@ -289,4 +291,7 @@ def load_page(path: Path, *, deskew: bool = True, skew_tolerance: float = 0.1) -
         background=background,
         source_path=Path(path),
         paper_spread=spread,
+        # Flattening serves the threshold; a tint is looked for in the scan as
+        # it was, because a large tint bends the paper estimate into itself.
+        raw_gray=scanned,
     )

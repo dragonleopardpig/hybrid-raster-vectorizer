@@ -84,20 +84,91 @@ def ruling_width(mask: np.ndarray, area: int, spacing: float, pen: float) -> flo
     and the width of the ink folded onto one period, which smears as soon as the
     measured angle is a degree out over a line a few hundred pixels long.
     """
+    measured = ruling_measure(mask, area, spacing, pen)
+    if measured is None:
+        return pen
+    return float(np.clip(measured, 0.35 * pen, 1.5 * pen))
+
+
+def line_width(mask: np.ndarray, segments: np.ndarray | None = None, reach_px: float = 3.0) -> float:
+    """The width the lines in a mask were drawn with.
+
+    Twice the distance to the background along the lines' centrelines, as a
+    median, exactly as preprocess.estimate_stroke_width measures the page's
+    pen, so the two compare like with like (both read a pixel over the true
+    width). Given the segments the lines were found by, the distance is read
+    along those and nothing else: asked of a whole patch, the skeleton of the
+    lens outline and axis that fig-4-18's wavefront lines share a component
+    with outweighed the lines, and the median answered the outline's pen.
+
+    A Hough segment lies along an EDGE of a thick line as readily as along its
+    middle (fig-4-18's 12 px lines gave segments at x = 614, 615, 616, 617,
+    reading 2 to 4), so what is sampled is the ridge: the largest distance
+    within a pen's reach across the segment.
+    """
+    from skimage.morphology import skeletonize
+
+    distance = cv2.distanceTransform((mask > 0).astype(np.uint8), cv2.DIST_L2, 5)
+    if segments is None:
+        skeleton = skeletonize(mask > 0)
+        samples = distance[skeleton]
+    else:
+        samples = _ridge_samples(mask, segments, reach_px)
+    if samples.size == 0:
+        return 0.0
+    return float(2.0 * np.median(samples))
+
+
+def _ridge_samples(mask: np.ndarray, segments: np.ndarray, reach_px: float) -> np.ndarray:
+    """The ridge of the distance transform sampled every two pixels along segments."""
+    distance = cv2.distanceTransform((mask > 0).astype(np.uint8), cv2.DIST_L2, 5)
+    ridge = cv2.dilate(distance, _disc(max(1, int(np.ceil(reach_px)))))
+    points = []
+    for x1, y1, x2, y2 in segments:
+        count = max(2, int(np.hypot(x2 - x1, y2 - y1) / 2.0))
+        xs = np.clip(np.round(np.linspace(x1, x2, count)).astype(int), 0, mask.shape[1] - 1)
+        ys = np.clip(np.round(np.linspace(y1, y2, count)).astype(int), 0, mask.shape[0] - 1)
+        points.append(ridge[ys, xs])
+    samples = np.concatenate(points) if points else np.empty(0)
+    return samples[samples > 0]
+
+
+def heavy_share(mask: np.ndarray, segments: np.ndarray, limit: float, reach_px: float = 3.0) -> float:
+    """What share of the segments' length runs along ink wider than `limit`."""
+    samples = _ridge_samples(mask, segments, reach_px)
+    if samples.size == 0:
+        return 0.0
+    return float(np.mean(2.0 * samples > limit))
+
+
+def ruling_share(mask: np.ndarray, segments: np.ndarray, width: float) -> float:
+    """What share of the ink the ruling lines account for."""
+    painted = np.zeros_like(mask)
+    thickness = max(1, int(round(width)) + 2)
+    for x1, y1, x2, y2 in segments:
+        cv2.line(painted, (int(x1), int(y1)), (int(x2), int(y2)), 255, thickness)
+    total = float(np.count_nonzero(mask))
+    if total <= 0:
+        return 0.0
+    return float(np.count_nonzero(cv2.bitwise_and(painted, mask))) / total
+
+
+def ruling_measure(mask: np.ndarray, area: int, spacing: float, pen: float) -> float | None:
+    """The ruling's line width as the ink, area and spacing imply it, unclipped."""
     filled = np.zeros_like(mask)
     contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return pen
+        return None
     outer = max(contours, key=cv2.contourArea)
     cv2.drawContours(filled, [outer], -1, 255, cv2.FILLED)
     covered = float(np.count_nonzero(filled))
     if covered <= 0:
-        return pen
+        return None
 
     # The outline is ink too, and is not ruling.
     edge = float(cv2.arcLength(outer, True)) * pen
     ruling = max(0.0, float(area) - edge)
-    return float(np.clip(spacing * ruling / covered, 0.35 * pen, 1.5 * pen))
+    return float(spacing * ruling / covered)
 
 
 def detect_hatch(
@@ -108,6 +179,8 @@ def detect_hatch(
     angle_tolerance: float = 8.0,
     minimum_periods: float = 4.0,
     least_coverage: float = 0.4,
+    heaviest: float = 1.5,
+    least_share: float = 0.5,
 ) -> Hatch | None:
     """Find ruling: many parallel strokes at one angle and one spacing.
 
@@ -120,6 +193,9 @@ def detect_hatch(
     of marks that merely lies at one angle covers a tenth of it: measured on
     these figures, real ruling reaches 0.89 of what it implies and every false
     one between 0.05 and 0.12.
+
+    And it has to be ruled with a pen no heavier than the page's: lines drawn
+    heavier than the drawing's own pen are the drawing.
     """
     mask = component.mask
     if min(mask.shape) < 8 * stroke_width:
@@ -181,6 +257,27 @@ def detect_hatch(
     coverage = float(component.area) / max(1.0, float(component.width * component.height))
     implied = stroke_width / spacing
     if implied <= 0 or coverage < least_coverage * implied:
+        return None
+
+    # Shading is ruled no heavier than the drawing it fills. Five parallel
+    # wavefront lines on fig-4-18, each 2.7 pens wide at nine pens apart,
+    # answered every test above and were drawn as ruling with their own
+    # outlines as its border.
+    ruled_with = line_width(mask, segments[:, 0, :][aligned], reach_px=stroke_width)
+    if ruled_with > heaviest * stroke_width:
+        return None
+    # The median hides a mixture: on fig-4-18 the aligned segments were the
+    # frame's sides and the lens's inner lines at the pen AND the wavefront
+    # lines at 2.7 pens, and the median answered the pen. A ruling in which a
+    # third of the line length is drawn heavier than the pen is a drawing.
+    if heavy_share(mask, segments[:, 0, :][aligned], heaviest * stroke_width, reach_px=stroke_width) >= 0.3:
+        return None
+
+    # And the ruling has to BE the ink. A drawing whose straightest strokes
+    # happen to be parallel -- fig-4-18's whole framed figure, where ten
+    # vertical lines carried the Hough vote but a third of the ink -- is not
+    # a ruled area; ruling inside a frame is three quarters or more of it.
+    if ruling_share(mask, segments[:, 0, :][aligned], ruled_with) < least_share:
         return None
 
     return Hatch(
@@ -293,13 +390,18 @@ class MarkerSet:
     components: list[Component] = field(default_factory=list, repr=False)
 
 
-def has_border(component: Component, stroke_width: float, *, threshold: float = 0.7) -> bool:
+def has_border(component: Component, stroke_width: float, *, threshold: float = 0.8) -> bool:
     """Is the boundary drawn, or is it only where the ruling happens to stop?
 
     Testing the ink just inside the boundary does not work: eroding by the pen
-    width erases a thin frame entirely. Instead the simplified boundary is drawn
-    and the ink is asked whether it lies along it, which a frame does all the way
-    round and bare ruling does only where each line ends.
+    width erases a thin frame entirely. Instead the boundary is drawn and the
+    ink is asked whether it lies along it, which a frame does all the way round
+    and bare ruling does only where each line ends.
+
+    The boundary asked about is the convex hull, not the ink's own outline: the
+    outline of bare ruling is the outline of each line, and ink lies along all
+    of it by definition, so a stack of parallel lines was "bordered" by its own
+    edges and drawn with a sausage around every line.
     """
     padded = cv2.copyMakeBorder(component.mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
     contours, _hierarchy = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -307,7 +409,8 @@ def has_border(component: Component, stroke_width: float, *, threshold: float = 
         return False
 
     outer = max(contours, key=cv2.contourArea)
-    simplified = cv2.approxPolyDP(outer, max(2.0, 1.5 * stroke_width), True)
+    hull = cv2.convexHull(outer)
+    simplified = cv2.approxPolyDP(hull, max(2.0, 1.5 * stroke_width), True)
     if len(simplified) < 3:
         return False
 
@@ -321,36 +424,59 @@ def has_border(component: Component, stroke_width: float, *, threshold: float = 
     return int(np.count_nonzero(cv2.bitwise_and(edge, near_ink))) / total >= threshold
 
 
-def paper_trough(gray: np.ndarray, ink: np.ndarray, lift: float = 1.4) -> int | None:
-    """Where the paper ends and a tint begins, read off this scan's own greys.
+def tint_field(raw: np.ndarray, ink: np.ndarray, stroke_width: float) -> tuple[np.ndarray, np.ndarray]:
+    """The grey of the page between the ink, carried across the ink itself.
 
-    A light tint prints a few levels below the paper, and a fixed offset from
-    the paper cannot find it: a tint at 242 sat just above a ceiling of 240 and
-    was cut away, leaving a holey blob whose edge wandered through its middle
-    instead of following the outline it was drawn with.
+    A tint is mottled on a scan (fig-3-7's slab runs 218 to 240 against a paper
+    of 255) and a screened one is dots with white between them (fig-2-2's band:
+    median 195, nothing of it in the ink mask), so no single pixel says what it
+    is. Blurred over a pen width with the ink masked out, every one of them
+    reads 15 levels or more below the paper, while the paper itself stays
+    within a level or two of white. A pen, not two: the thin tinted crescents
+    of a lens element are only a few pens wide and wash out under more.
 
-    A page carrying a tint is bimodal below the paper spike -- a tint mode, a
-    trough, then paper. A page without one rises to the paper monotonically, and
-    is left alone.
+    The ink is masked before blurring and the blur is renormalised, so a line
+    drawn across a tint does not darken its neighbourhood, and the tint is
+    interpolated under the line: a slab crossed by five rays is one region, not
+    six pieces. Where no paper is near (inside a solid fill) the field is paper.
     """
-    counts = np.bincount(gray[ink == 0], minlength=256).astype(float)
-    if counts.sum() <= 0:
-        return None
-    smooth = cv2.GaussianBlur(counts.reshape(-1, 1), (1, 5), 0).ravel()
+    keep = cv2.dilate(ink, _disc(max(2, int(stroke_width)))) == 0
+    sigma = max(2.0, stroke_width)
+    weight = cv2.GaussianBlur(keep.astype(np.float32), (0, 0), sigma)
+    value = cv2.GaussianBlur(raw.astype(np.float32) * keep, (0, 0), sigma)
+    field = np.where(weight > 0.01, value / np.maximum(weight, 1e-3), 255.0).astype(np.float32)
+    return field, keep
 
-    top = int(np.argmax(smooth))
-    trough = None
-    for level in range(top - 2, 8, -1):
-        if smooth[level] <= smooth[level + 1] and smooth[level] <= smooth[level - 1]:
-            trough = level
-            break
-    if trough is None or trough < 16:
-        return None
 
-    peak = int(np.argmax(smooth[:trough]))
-    if smooth[peak] < lift * max(smooth[trough], 1.0):
+def _edge_step(field: np.ndarray, mask: np.ndarray, free: np.ndarray, keep: np.ndarray, pen: float) -> float | None:
+    """How much lighter the page is just outside a region than just inside it.
+
+    Measured two to four pen widths either side of the part of the boundary that
+    no ink runs along: a printed tint ends in a step of its whole depth, a stain
+    fades over hundreds of pixels and steps by a few levels at most.
+    """
+    if free.shape[0] < 20:
         return None
-    return trough
+    inside = cv2.distanceTransform(mask, cv2.DIST_L2, 3)
+    outside = cv2.distanceTransform((mask == 0).astype(np.uint8), cv2.DIST_L2, 3)
+    marks = np.zeros_like(mask)
+    marks[free[:, 1], free[:, 0]] = 255
+    near = cv2.dilate(marks, _disc(max(2, int(5 * pen)))) > 0
+    ring_in = (inside > 2 * pen) & (inside < 4 * pen) & near
+    ring_out = (outside > 2 * pen) & (outside < 4 * pen) & near & keep
+    if np.count_nonzero(ring_in) < 20 or np.count_nonzero(ring_out) < 20:
+        return None
+    return float(np.median(field[ring_out]) - np.median(field[ring_in]))
+
+
+def _plane_span(values: np.ndarray, where: np.ndarray) -> float:
+    """How far a plane fitted through the region's grey rises across it."""
+    ys, xs = np.nonzero(where)
+    if ys.size < 3:
+        return 0.0
+    design = np.column_stack([xs, ys, np.ones_like(xs)]).astype(np.float64)
+    coefficients, *_rest = np.linalg.lstsq(design, values.astype(np.float64), rcond=None)
+    return float(np.ptp(design @ coefficients))
 
 
 def detect_tints(
@@ -361,77 +487,90 @@ def detect_tints(
     claimed: np.ndarray | None = None,
     minimum_enclosed: float = 0.85,
     smallest: float = 12.0,
+    raw: np.ndarray | None = None,
 ) -> list[Region]:
     """Find areas printed as a grey tint rather than drawn with a pen.
 
-    A tint is not ink. One threshold cannot hold both a dark stroke and a light
-    fill, so a tint is looked for in the greyscale, between the ink and the
-    paper, and carries the density it was printed at rather than becoming solid.
+    A tint is not ink. It is looked for in the greyscale -- in the page AS
+    SCANNED, because flattening the paper divides a large tint away: a slab
+    covering a third of the page bends the paper estimate into itself, and
+    came out within two levels of the paper on fig-3-7, 3-5 and 3-22 at every
+    setting of the estimate. Seventeen of the first thirty-six corpus figures
+    lost their tints that way.
 
-    A stain on the scan sits in the same band. What separates them is that a
-    tint in a technical drawing is an area someone outlined: nearly all of its
-    boundary runs along drawn ink. Measured on these figures, tints have 0.99 to
-    1.00 of their boundary on ink and stains 0.25 to 0.76.
+    What separates a tint from a stain, measured on those figures:
 
-    Edge sharpness was tried first, as the gradient around the boundary against
-    the gradient inside. It appeared to separate them, but only because these
-    tints happen to be outlined, and it collapses on an evenly printed area
-    where both medians are zero.
+    - A tint is an area someone drew: nearly all of its boundary runs along
+      ink (1.00 on every slab), and its grey is FLAT -- a plane fitted through
+      it spans less than its depth below the paper (fig-3-7, the worst, 21 of
+      25 levels). A stain inside a frame is also bounded by ink (0.84 to 0.93
+      on fig-1-9 and fig-1-11), but it is a gradient: the plane spans 1.3 to
+      2.5 times the depth, and its grey spreads over more than the depth.
+    - A tint printed without an outline (fig-2-2's screened band) ends in a
+      sharp step, 38 to 44 levels of a 60-level depth at two pen widths, and
+      is a clean rectangle; a stain fades (fig-1-9: 4 levels of 35) and is
+      never a clean shape.
+
+    Edge sharpness alone was tried once before and collapses on an evenly
+    printed area inside an outline, where both sides are flat; it is only
+    asked of a boundary that no ink runs along.
     """
     if not np.any(ink == 0):
         return []
-
-    paper = float(np.percentile(gray[ink == 0], 90))
-    threshold, _binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-    low = threshold + 0.25 * (paper - threshold)
-    high = paper - max(10.0, 0.06 * paper)
-    trough = paper_trough(gray, ink)
-    if trough is not None:
-        high = max(high, float(trough))
-    if high <= low:
+    source = gray if raw is None else raw
+    field, keep = tint_field(source, ink, stroke_width)
+    free_paper = field[keep]
+    if free_paper.size < 100:
         return []
+    paper = float(np.percentile(free_paper, 95))
+    upper = free_paper[free_paper > np.median(free_paper)]
+    noise = 1.4826 * float(np.median(np.abs(upper - np.median(upper)))) if upper.size else 0.0
+    margin = max(10.0, 3.0 * noise)
 
-    band = ((gray > low) & (gray < high)).astype(np.uint8) * 255
-    # Fill the screen first: a tint is mostly band with a scatter of holes, and
-    # opening it straight away leaves nowhere for the disc to sit.
-    band = cv2.morphologyEx(band, cv2.MORPH_CLOSE, _disc(max(1, int(stroke_width))))
-    settled = band
-    opening = max(2, int(2 * stroke_width))
-    band = cv2.morphologyEx(band, cv2.MORPH_OPEN, _disc(opening))
+    low = (field < paper - margin).astype(np.uint8) * 255
+    # Opened by a pen: a shadow along a line goes, a lens element's thin
+    # tinted crescent stays (two of thicklens_cascade's four went at two pens).
+    low = cv2.morphologyEx(low, cv2.MORPH_OPEN, _disc(max(2, int(stroke_width))))
     if claimed is not None:
-        band = cv2.bitwise_and(band, cv2.bitwise_not(claimed))
-        settled = cv2.bitwise_and(settled, cv2.bitwise_not(claimed))
+        low = cv2.bitwise_and(low, cv2.bitwise_not(claimed))
 
-    near_ink = cv2.dilate(ink, _disc(max(2, int(1.5 * stroke_width))))
-    ring = _disc(4)
+    near_ink = cv2.dilate(ink, _disc(max(2, int(2.0 * stroke_width)))) > 0
     floor = (smallest * stroke_width) ** 2
-
     regions: list[Region] = []
-    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(band, 8)
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(low, 8)
     for label in range(1, count):
         x, y, width, height, area = (int(v) for v in stats[label])
         if area < floor:
             continue
         mask = (labels == label).astype(np.uint8) * 255
-        inside = cv2.erode(mask, ring) > 0
-        if not inside.any():
-            continue
-
-        # Opening pulled the blob a disc's width inside the outline that drew
-        # it, further than the ink is looked for, so an area someone had plainly
-        # outlined scored 0.72 where it needed 0.85. Put the width back before
-        # asking where its edge runs, without letting it spread past the tint.
-        edged = cv2.bitwise_and(cv2.dilate(mask, _disc(opening)), settled)
-
-        contours, _hierarchy = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        contours, _hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         if not contours:
             continue
         boundary = max(contours, key=cv2.contourArea).reshape(-1, 2)
-        on_ink = sum(1 for px, py in boundary if near_ink[py, px] > 0)
-        if on_ink / max(1, len(boundary)) < minimum_enclosed:
-            continue
+        on_ink = near_ink[boundary[:, 1], boundary[:, 0]]
+        enclosed = float(on_ink.mean())
 
-        level = float(np.median(gray[inside]))
+        inner = (cv2.erode(mask, _disc(max(2, int(3.0 * stroke_width)))) > 0) & keep
+        if np.count_nonzero(inner) < 50:
+            inner = (mask > 0) & keep
+        if np.count_nonzero(inner) < 50:
+            continue
+        values = field[inner]
+        level = float(np.median(values))
+        drop = paper - level
+        if drop <= 0:
+            continue
+        spread = float(np.percentile(values, 90) - np.percentile(values, 10))
+        if _plane_span(values, inner) > 0.9 * drop or spread > 1.2 * drop:
+            continue  # a gradient: the scan's stain, not a printed tint
+
+        if enclosed < minimum_enclosed:
+            step = _edge_step(field, mask, boundary[~on_ink], keep, stroke_width)
+            hull = cv2.convexHull(boundary)
+            clean = area / float(max(1, width * height)) >= 0.9 or area / max(1.0, cv2.contourArea(hull)) >= 0.9
+            if step is None or step < max(8.0, 0.6 * drop) or not clean:
+                continue
+
         component = Component(
             label=label, x=x, y=y, width=width, height=height, area=area,
             centroid=(x + width / 2.0, y + height / 2.0),
@@ -489,7 +628,7 @@ def as_printed(component: Component, ink: np.ndarray) -> Component | None:
 
 def detect_regions(
     ink: np.ndarray, stroke_width: float, gray: np.ndarray | None = None,
-    ruled_at_most: float = 0.35,
+    ruled_at_most: float = 0.35, raw: np.ndarray | None = None,
 ) -> tuple[list[Region], np.ndarray]:
     """Take the filled and ruled areas out of the ink before anything else.
 
@@ -570,7 +709,7 @@ def detect_regions(
     # pixels are not ink, so nothing is taken out of the working image: the
     # strokes drawn across a tint still have to be traced.
     claimed = cv2.bitwise_and(ink, cv2.bitwise_not(working))
-    regions.extend(detect_tints(gray, ink, stroke_width, claimed=claimed))
+    regions.extend(detect_tints(gray, ink, stroke_width, claimed=claimed, raw=raw))
 
     return regions, working
 

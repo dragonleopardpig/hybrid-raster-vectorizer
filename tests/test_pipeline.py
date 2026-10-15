@@ -589,7 +589,8 @@ class ShapeTest(unittest.TestCase):
         for offset in range(-260, 260, 16):
             cv2.line(mask, (offset, 0), (offset + 220, 220), 255, 2)
         cv2.rectangle(mask, (2, 2), (257, 217), 255, 2)
-        hatch = detect_hatch(self._component(mask), 2.0)
+        # The pen as the pipeline measures it, so ruling at the pen is at the pen.
+        hatch = detect_hatch(self._component(mask), estimate_stroke_width(mask))
         self.assertIsNotNone(hatch)
         self.assertAlmostEqual(hatch.angle, 45.0, delta=4.0)
         self.assertAlmostEqual(hatch.spacing, 16.0 / (2 ** 0.5), delta=2.0)
@@ -613,7 +614,7 @@ class ShapeTest(unittest.TestCase):
         full = np.zeros((220, 260), np.uint8)
         for offset in range(-260, 260, 16):
             cv2.line(full, (offset, 0), (offset + 220, 220), 255, 3)
-        self.assertIsNotNone(detect_hatch(self._component(full), 3.0))
+        self.assertIsNotNone(detect_hatch(self._component(full), estimate_stroke_width(full)))
 
         sparse = np.zeros((220, 260), np.uint8)
         for offset in range(-260, 260, 16):
@@ -1314,8 +1315,13 @@ class LensCascadeTest(unittest.TestCase):
         self.assertGreaterEqual(len(row), 4)
 
     def test_the_shaded_lens_elements_are_tints(self):
+        """Two lenses, each one tint: the tint is read across the principal-plane
+        lines drawn through it, where it used to be cut into pieces by them."""
         tints = [region for region in self.analysis.regions if region.kind == "tint"]
-        self.assertEqual(len(tints), 4)
+        self.assertEqual(len(tints), 2)
+        for tint in tints:
+            self.assertGreater(tint.component.area, 30000)
+            self.assertAlmostEqual(tint.opacity, 0.16, delta=0.05)
 
 
 class TurningAMaskTest(unittest.TestCase):

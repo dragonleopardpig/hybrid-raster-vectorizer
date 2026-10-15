@@ -113,7 +113,7 @@ def analyse(path: Path, options: Options) -> Analysis:
     components = extract(page.ink)
     text_height = median_text_height(components, page.height, page.stroke_width)
 
-    regions, working = detect_regions(page.ink, page.stroke_width, page.gray)
+    regions, working = detect_regions(page.ink, page.stroke_width, page.gray, raw=page.raw_gray)
     rules = detect_rules(page, ink=working)
     ticks = [
         tick
